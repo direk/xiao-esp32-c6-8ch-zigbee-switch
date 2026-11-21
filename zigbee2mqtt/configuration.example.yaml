@@ -1,0 +1,14 @@
+# Merge with existing Zigbee2MQTT configuration.yaml; replace the IEEE address.
+advanced:
+  enable_external_js: true
+
+homeassistant:
+  enabled: true
+
+devices:
+  '0xREPLACE_WITH_XIAO_IEEE':
+    friendly_name: xiao_4ch
+    retain: false
+    qos: 0
+    debounce: 0
+    throttle: 0

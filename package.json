@@ -1,0 +1,12 @@
+{
+  "name": "xiao-c6-zigbee-4ch-failsafe",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/converter.test.mjs",
+    "test:control": "cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -I firmware/main firmware/main/control.c tests/control_test.c -o /private/tmp/xiao-control-test && /private/tmp/xiao-control-test"
+  },
+  "devDependencies": {
+    "zigbee-herdsman-converters": "26.135.0"
+  }
+}

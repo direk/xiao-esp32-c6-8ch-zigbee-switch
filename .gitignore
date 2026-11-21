@@ -1,0 +1,10 @@
+firmware/build/
+firmware/managed_components/
+firmware/sdkconfig
+firmware/sdkconfig.old
+node_modules/
+backups/
+dist/
+.venv/
+__pycache__/
+.DS_Store
