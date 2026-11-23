@@ -1,48 +1,93 @@
-# XIAO-C6-4CH-FAIL1, protocol v1.2 (firmware/converter 1.2.0)
+# XIAO-C6-8CH protocol 2.0.0
 
-Manufacturer: `DIY-XIAO`. Model retained for in-place upgrades.
-HA profile `0x0104`, On/Off Switch device `0x0000`, endpoints 1, 2, 3, 4.
-Each endpoint exposes a client On/Off cluster (`0x0006`) and a server custom
-cluster `0xfc00`. Custom frames have no manufacturer-specific header/code.
+Eight endpoints (1–8), profile 0x0104, manufacturer DIY-XIAO, model XIAO-C6-8CH.
+Every endpoint advertises outgoing On/Off (0x0006), Level Control (0x0008),
+Color Control (0x0300) and Scenes (0x0005), plus custom server cluster 0xfc00.
+There is no battery reporting, sleep or heartbeat. Power is continuous and the
+node remains a Zigbee router. External antenna: GPIO3=0, GPIO14=1.
+CH1–CH8 use GPIO0/1/2/21/22/23/19/20 (D0–D5, D8, D9).
+UART1 TX/RX GPIO16/17 (D6/D7) accepts ASCII button commands at 115200 8N1.
+The protocol, timing, safety timeout and responses are specified in [UART.md](UART.md).
+Serial button states are ORed with physical inputs before the same gesture planner.
+A separate priority-4 UART task owns RX, parsing and TX. Only typed commands and
+replies cross bounded FreeRTOS queues (8 entries each). Zigbee handles at most
+one command per tick using zero-timeout queue operations, reserving reply space
+before execution. All channel state/config access remains in Zigbee context.
+GET 1–8 returns a single JSON line with every channel setting (including binding
+priority), mode-permitted commands and effective gestures. It is read-only and
+works regardless of network readiness or channel BUSY state. Configuration is
+snapshotted when executed in Zigbee context, with UART-task-only transmission.
+Replies use 768-byte buffers; oversized JSON produces ERR RESPONSE_SIZE instead
+of a truncated object. See UART.md for fields and gesture semantics.
 
-| Attribute | Endpoint | ZCL type | Access | Meaning |
-|---|---|---|---|---|
-| 0x0001 | 1–4 | uint8, 0x20 | R/W | inputMode: 0 push, 1 rocker |
-| 0x0002 | 1–4 | bool, 0x10 | R/W | inverted |
-| 0x0012 | 1–4 | uint8, 0x20 | R/report | channelRoute: 0 binding, 1 Z2M action |
-| 0x0013 | 1–4 | uint8, 0x20 | R/report | bindingStatus: 0 unknown, 1 unbound, 2 bound |
-| 0x0020 | 1–4 | uint32, 0x23 | R/report | event: 24-bit counter followed by 8-bit On/Off command |
+| Attribute | Type | Access | Meaning |
+|---|---|---|---|
+| 0x01 | uint8 | RW | inputMode: 0 push, 1 rocker |
+| 0x02 | bool | RW | inverted |
+| 0x05 | uint8 | RW | switchType: 0–12, modes in README |
+| 0x06 | uint8 | RW | switchAction: 0 off, 1 on, 2 toggle |
+| 0x07 / 0x08 | uint8 | RW | minLevel / maxLevel, 1–254 |
+| 0x09 | uint16 | RW | transitionTime, deciseconds, 0–600 |
+| 0x0a / 0x0b | uint16 | RW | colorMin / colorMax, mireds, 1–1000 |
+| 0x0c | uint8 | RW | sceneId |
+| 0x0d | uint16 | RW | sceneGroup, 0 for binding, 1–0xfff7 direct group |
+| 0x0e | bool | RW | bindingPriority: 1 ON (default), 0 OFF, per endpoint |
+| 0x12 | uint8 | R/report | channelRoute: 0 binding, 1 action, 2 mixed |
+| 0x13 | uint8 | R/report | bindingStatus: 0 unknown, 1 unbound, 2 bound |
+| 0x14 | uint8 | R/report | bindingClusters bits: 1 On/Off, 2 Level, 4 Color, 8 Scenes |
+| 0x20 | uint32 | R/report | event: 24-bit counter and 8-bit action ID |
 
-Attributes 0x0003, 0x0004, 0x0010 and 0x0011 from previous versions have been
-removed. No timeout, challenge, heartbeat or online/offline state remains.
+Action IDs 0–18: off, on, toggle, single, double, triple, hold, release,
+brightness_move_up, brightness_move_down, brightness_step_up, brightness_step_down,
+brightness_stop, color_temperature_move_up, color_temperature_move_down,
+color_temperature_step_up, color_temperature_step_down, color_temperature_stop, scene.
+The converter prefixes the source channel, e.g. ch8_brightness_step_up.
+Only live event reports produce actions; reading an event never replays it.
 
-One debounced input transition selects exactly one path:
+Each command checks bindings for its own source endpoint AND cluster. A matching
+binding selects direct APS transmission. bindingPriority=1 suppresses its action;
+bindingPriority=0 also sends an action without suppressing direct control.
+No match always selects an action report to
+coordinator address 0, endpoint 1. Multifunction gestures always report actions.
+A configured scene group selects direct group transmission without requiring a bind;
+it also emits an action when bindingPriority=0. Report-only gestures are sent once.
+channelRoute describes direct control availability, irrespective of extra actions.
+No-onoff modes intentionally ignore single clicks; alternating no-onoff also ignores
+double clicks. They never manufacture a fallback On/Off action for an ignored gesture.
 
-- Bound channel: standard On/Off command through its source endpoint binding
-  table. Never produce an actionable event for HA/Z2M.
-- Unbound channel: event report to coordinator network address 0, endpoint 1.
-  Never issue standard On/Off to another channel's bindings.
+Binding snapshots come from local ZDO Mgmt_Bind, with all pages committed atomically.
+32 source entries are shared by all endpoints/clusters. Unknown startup state waits
+for the first complete local snapshot. Invalid reads retain the last complete mask.
+Self and known coordinator destinations are excluded. Refresh is once per second
+and shortly after incoming Bind/Unbind.
 
-The ZDO Mgmt_Bind request targets the device's own short address. Complete
-paginated snapshots replace the mask atomically; errors retain the previous mask.
-The table is refreshed locally every second and shortly after observed Bind/Unbind.
-Only local-source On/Off entries with group or IEEE destinations count. Self and
-known coordinator destinations are excluded. Input handling waits for the first
-complete snapshot after startup (normally tens of milliseconds).
+The gesture/packet planner in control.c is independent of ESP-IDF and unit-tested.
+Direct frames use ZCL cluster-specific client-to-server header 0x11. Level modes
+10/11/12 use commands 0x00, 0x02, 0x03 with optionsMask=1, optionsOverride=0.
+This explicitly clears ExecuteIfOff for the command. Ordinary upward movement
+uses command 0x04 and ordinary steps 0x06. Steps are 25 brightness units.
+Hold targets min/max over transitionTime; release sends Stop. Direction alternates
+between successive holds in the alternating modes. Color uses 0x0a, 0x4c and 0x47.
+Raw frames are decoded in host tests using real zigbee-herdsman definitions.
+APS transmission uses the stack binding table; its network delivery still needs
+acceptance testing with actual lamps. Lamp support determines ExecuteIfOff behavior.
 
-Binding capacity is 32 entries across all channels. Bind `genOnOff` only to
-lamps/groups. Do not bind it to the coordinator. The converter ignores received
-standard On/Off commands and does not bind endpoints automatically.
+Input configuration uses NVS key config2 in the existing xiao4 namespace.
+The separate uint8 NVS key bind_priority holds one bit per endpoint (bit 0 = CH1).
+Absent key defaults to 0xff, so both new and upgraded devices start with all ON.
+The config2 blob layout is unchanged. Both keys are written before the same nvs_commit call
+after one second of inactivity; factory reset erases both.
+First migration reads the 12-byte v1 config and retains input/invert on endpoints
+1–4; endpoints 5–8 use push/toggle defaults. The old key is retained. The Zigbee
+partitions and application offset 0x10000 are unchanged. The Z2M endpoint database
+must be refreshed through interview after the 4-to-8 endpoint upgrade.
 
-Input configuration persists after 1 second of inactivity. The v1 NVS layout
-is retained to preserve rocker/push and invert settings; the former timeout
-storage field is reserved and unused. Zigbee network/bindings storage is unchanged.
-An application-only update at 0x10000 preserves both partitions.
+Changing bindingPriority applies to the next command without interrupting a hold.
+Changing other configuration cancels a held operation and rebases the input, preventing
+synthetic presses. A held input at boot does not trigger an automatic hold action.
+Rocker is valid only for toggle/momentary and uses closed=ON, open=OFF. Advanced
+functions require push. Min/max pairs and other ranges are validated before writes.
+Configuration is committed after one second without another write.
 
-External antenna is selected: GPIO3 LOW enables the XIAO RF switch, GPIO14 HIGH
-selects U.FL. Startup logs read back both pin levels. This confirms switch control,
-not antenna gain or RF link quality. D3 is GPIO21 and is unrelated to GPIO3.
-
-No application buffering/replay or exactly-once guarantee; stack APS/network
-retries still apply. Direct binding requires powered targets and a viable mesh path.
-HA may independently control the same lamps; state reporting depends on lamp support.
+No application-level retransmission/replay, battery emulation or Zigbee OTA updater.
+Use USB for firmware updates. Zigbee routing/delivery and APS handling remain in SDK.

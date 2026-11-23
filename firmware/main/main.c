@@ -11,35 +11,47 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "control.h"
+#include "serial_input.h"
+#include "serial_transport.h"
 
 #define CLUSTER 0xfc00
 #define ATTR_MODE 0x0001
 #define ATTR_INVERT 0x0002
+#define ATTR_FUNCTION 0x0005
+#define ATTR_ACTION 0x0006
+#define ATTR_MIN 0x0007
+#define ATTR_MAX 0x0008
+#define ATTR_TRANSITION 0x0009
+#define ATTR_COLOR_MIN 0x000a
+#define ATTR_COLOR_MAX 0x000b
+#define ATTR_SCENE 0x000c
+#define ATTR_SCENE_GROUP 0x000d
+#define ATTR_BINDING_PRIORITY 0x000e
+#define ATTR_BINDING_CLUSTERS 0x0014
 #define ATTR_CHANNEL_ROUTE 0x0012
 #define ATTR_BINDING_STATUS 0x0013
 #define ATTR_EVENT 0x0020
-#define CHANNELS 4
 #define COORDINATOR_EP 1
 #define EXTERNAL_ANTENNA 1
 
-// XIAO D0, D1, D2, D3. Contacts close to GND, never to mains.
-static const gpio_num_t pins[CHANNELS] = {GPIO_NUM_0, GPIO_NUM_1, GPIO_NUM_2, GPIO_NUM_21};
-static const char *TAG = "xiao4";
-static struct {
-    uint8_t version;
-    uint8_t mode[CHANNELS];
-    uint8_t invert[CHANNELS];
-    uint16_t reserved; // Retain the v1 NVS layout; this field is unused.
-} cfg = {.version = 1};
+// XIAO D0..D5, D8/D9. UART D6/D7 (GPIO16/17) handles serial commands.
+// USB (GPIO12/13), antenna (3/14) and BOOT (9) remain separate.
+static const gpio_num_t pins[CHANNELS] = {GPIO_NUM_0, GPIO_NUM_1, GPIO_NUM_2, GPIO_NUM_21, GPIO_NUM_22, GPIO_NUM_23, GPIO_NUM_19, GPIO_NUM_20};
+static const char *TAG = "xiao8";
+static struct { uint8_t version; channel_config_t channels[CHANNELS]; } cfg = {.version=2};
 static nvs_handle_t nv;
-static input_t inputs[CHANNELS];
+// Separate key preserves the binary layout of existing config2 installations.
+static uint8_t binding_priority[CHANNELS];
+static button_t inputs[CHANNELS];
+static serial_input_t serial_input;
 static bool joined, dirty, rebase[CHANNELS];
 static uint64_t dirty_at, boot_pressed_at;
 static bool boot_held;
 static uint32_t events[CHANNELS];
-static uint8_t channel_route[CHANNELS] = {1, 1, 1, 1};
+static uint8_t channel_route[CHANNELS] = {1,1,1,1,1,1,1,1};
 static uint8_t binding_status[CHANNELS]; // 0=unknown, 1=unbound, 2=bound.
-static uint8_t bound_mask;
+static uint8_t bound_mask, cluster_masks[4], pending_masks[4], binding_clusters[CHANNELS];
+static uint8_t aps_sequence;
 static bool bindings_known, scan_active;
 static binding_scan_t binding_scan;
 static esp_zb_zdo_mgmt_bind_param_t binding_request;
@@ -49,7 +61,7 @@ static esp_zb_ieee_addr_t coordinator_ieee;
 static bool coordinator_known;
 
 static uint64_t now_ms(void) { return (uint64_t)esp_timer_get_time() / 1000; }
-static bool active(unsigned i) { return (gpio_get_level(pins[i]) == 0) ^ (cfg.invert[i] != 0); }
+static bool active(unsigned i) { return ((gpio_get_level(pins[i]) == 0) ^ (cfg.channels[i].invert != 0)) || serial_input.buttons[i].down; }
 
 static void set_attr(uint8_t ep, uint16_t id, void *value) {
     esp_zb_zcl_status_t s = esp_zb_zcl_set_attribute_val(ep, CLUSTER, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE, id, value, false);
@@ -71,8 +83,21 @@ static void report(uint8_t ep, uint16_t id) {
 
 static void update_route(void) {
     for (unsigned i = 0; i < CHANNELS; ++i) {
-        bool bound = (bound_mask & (1U << i)) != 0;
-        uint8_t path = channel_uses_binding(bound) ? 0 : 1;
+        uint8_t mask=0;
+        for (unsigned j=0;j<4;++j) if (cluster_masks[j] & (1U<<i)) mask|=1U<<j;
+        uint8_t function=cfg.channels[i].function;
+        uint8_t needed=function<=MODE_MOMENTARY ? 1 : function==MODE_MULTIFUNCTION ? 0 :
+            function==MODE_SCENE ? 8 : (function>=MODE_COLOR && function<=MODE_COLOR_DOWN) ? 4 :
+            function>=MODE_LEVEL_NO_ONOFF ? 2 : 3;
+        bool group_scene=function==MODE_SCENE && cfg.channels[i].scene_group!=0;
+        bool bound=(bound_mask & (1U<<i))!=0;
+        uint8_t available=mask & needed;
+        uint8_t path=group_scene || (needed && available==needed) ? 0 : available ? 2 : 1;
+        if (binding_clusters[i]!=mask) {
+            binding_clusters[i]=mask;
+            set_attr(i+1,ATTR_BINDING_CLUSTERS,&binding_clusters[i]);
+            report(i+1,ATTR_BINDING_CLUSTERS);
+        }
         uint8_t status = bindings_known ? (bound ? 2 : 1) : 0;
         if (channel_route[i] != path) {
             channel_route[i] = path;
@@ -104,8 +129,10 @@ static void binding_table_received(const esp_zb_zdo_binding_table_info_t *table,
         bool excluded = record->dst_addr_mode == 3 &&
             (!memcmp(record->dst_address.addr_long, own, sizeof(own)) ||
              (coordinator_known && !memcmp(record->dst_address.addr_long, coordinator_ieee, sizeof(own))));
-        mask = binding_mask_add(mask, record->src_endp, record->cluster_id, record->dst_addr_mode,
-                                !memcmp(record->src_address, own, sizeof(own)), excluded);
+        bool local=!memcmp(record->src_address,own,sizeof(own));
+        mask=binding_mask_add(mask,record->src_endp,record->cluster_id,record->dst_addr_mode,local,excluded);
+        int ci=binding_cluster_index(record->cluster_id);
+        if (ci>=0) pending_masks[ci]=binding_mask_add(pending_masks[ci],record->src_endp,record->cluster_id,record->dst_addr_mode,local,excluded);
         record = record->next;
     }
     int state = binding_scan_page(&binding_scan, table->index, table->total, table->count, mask);
@@ -117,6 +144,7 @@ static void binding_table_received(const esp_zb_zdo_binding_table_info_t *table,
         esp_zb_zdo_binding_table_req(&binding_request, binding_table_received, (void *)scan_generation);
     } else {
         bound_mask = binding_scan.mask;
+        memcpy(cluster_masks,pending_masks,sizeof(cluster_masks));
         bindings_known = true;
         scan_active = false;
         update_route();
@@ -132,6 +160,7 @@ static void refresh_bindings(uint64_t now) {
     if (scan_active || now < next_scan_ms) return;
     if (esp_zb_ieee_address_by_short(0, coordinator_ieee) == ESP_OK) coordinator_known = true;
     binding_scan = (binding_scan_t){0};
+    memset(pending_masks,0,sizeof(pending_masks));
     binding_request = (esp_zb_zdo_mgmt_bind_param_t){.dst_addr = esp_zb_get_short_address(), .start_index = 0};
     scan_active = true;
     scan_started_ms = now;
@@ -148,45 +177,72 @@ static bool aps_indication(esp_zb_apsde_data_ind_t ind) {
     return false;
 }
 
+static bool config_value(channel_config_t *c, uint16_t id, const uint8_t *v) {
+    uint16_t word=0;
+    switch (id) {
+    case ATTR_MODE:c->input_mode=*v;break;
+    case ATTR_INVERT:c->invert=*v;break;
+    case ATTR_FUNCTION:c->function=*v;break;
+    case ATTR_ACTION:c->switch_action=*v;break;
+    case ATTR_MIN:c->min_level=*v;break;
+    case ATTR_MAX:c->max_level=*v;break;
+    case ATTR_SCENE:c->scene_id=*v;break;
+    case ATTR_TRANSITION:case ATTR_COLOR_MIN:case ATTR_COLOR_MAX:case ATTR_SCENE_GROUP:
+        memcpy(&word,v,sizeof(word));
+        if (id==ATTR_TRANSITION)c->transition_time=word;
+        else if(id==ATTR_COLOR_MIN)c->color_min=word;
+        else if(id==ATTR_COLOR_MAX)c->color_max=word;
+        else c->scene_group=word;
+        break;
+    default:return false;
+    }
+    return channel_valid(c);
+}
 static int check_value(uint16_t id, uint8_t ep, uint8_t *v) {
-    if (!v || ep < 1 || ep > CHANNELS) return ESP_ZB_ZCL_STATUS_INVALID_VALUE;
-    if (id == ATTR_MODE || id == ATTR_INVERT) return *v <= 1 ? ESP_ZB_ZCL_STATUS_SUCCESS : ESP_ZB_ZCL_STATUS_INVALID_VALUE;
-    return ESP_ZB_ZCL_STATUS_READ_ONLY;
+    if (!v || ep<1 || ep>CHANNELS) return ESP_ZB_ZCL_STATUS_INVALID_VALUE;
+    if (id==ATTR_BINDING_PRIORITY) return *v<=1 ? ESP_ZB_ZCL_STATUS_SUCCESS : ESP_ZB_ZCL_STATUS_INVALID_VALUE;
+    channel_config_t candidate=cfg.channels[ep-1];
+    return config_value(&candidate,id,v) ? ESP_ZB_ZCL_STATUS_SUCCESS : ESP_ZB_ZCL_STATUS_INVALID_VALUE;
 }
-
-static void write_attr(uint8_t ep, uint16_t id, uint8_t *v, uint16_t manufacturer) {
+static void write_attr(uint8_t ep,uint16_t id,uint8_t *v,uint16_t manufacturer) {
     (void)manufacturer;
-    if (check_value(id, ep, v) != ESP_ZB_ZCL_STATUS_SUCCESS) return;
-    // Attribute storage can already contain the new value when this callback runs.
-    // Never use comparison against that same storage to decide whether to persist.
-    if (id == ATTR_MODE) {
-        cfg.mode[ep - 1] = *v; rebase[ep - 1] = true;
-    } else if (id == ATTR_INVERT) {
-        cfg.invert[ep - 1] = *v; rebase[ep - 1] = true;
+    if (check_value(id,ep,v)!=ESP_ZB_ZCL_STATUS_SUCCESS)return;
+    if(id==ATTR_BINDING_PRIORITY) binding_priority[ep-1]=*v;
+    else {
+        serial_input_cancel(&serial_input,ep-1);
+        config_value(&cfg.channels[ep-1],id,v);
+        rebase[ep-1]=true;
     }
-    dirty = true; dirty_at = now_ms();
-    ESP_LOGI(TAG, "Configuration write CH%u attr=0x%04x; persistence pending", ep, id);
+    dirty=true;dirty_at=now_ms();
+    ESP_LOGI(TAG,"Configuration write CH%u attr=0x%04x",ep,id);
 }
-
-static void button_action(unsigned i, int action) {
-    if (!joined) { ESP_LOGW(TAG, "Not joined; channel %u ignored", i + 1); return; }
-    // Decide once per edge. No retry through the alternative path and no replay.
-    bool direct = channel_uses_binding((bound_mask & (1U << i)) != 0);
-    if (!direct) {
-        uint32_t sequence = ((events[i] >> 8) + 1) & 0xffffff;
-        if (!sequence) sequence = 1;
-        events[i] = (sequence << 8) | (uint8_t)action;
-        set_attr(i + 1, ATTR_EVENT, &events[i]);
-        report(i + 1, ATTR_EVENT); // Explicit coordinator unicast, never binding-addressed.
-    } else {
-        esp_zb_zcl_on_off_cmd_t cmd = {
-            .zcl_basic_cmd.src_endpoint = i + 1,
-            .address_mode = ESP_ZB_APS_ADDR_MODE_DST_ADDR_ENDP_NOT_PRESENT,
-            .on_off_cmd_id = action,
-        };
-        esp_zb_zcl_on_off_cmd_req(&cmd); // Stack uses (source EP, cluster) binding entries.
+static void send_action(unsigned i,uint8_t action) {
+    uint32_t seq=((events[i]>>8)+1)&0xffffff;
+    if(!seq)seq=1;
+    events[i]=(seq<<8)|action;
+    set_attr(i+1,ATTR_EVENT,&events[i]);report(i+1,ATTR_EVENT);
+}
+static void dispatch(unsigned i,const command_t *c) {
+    if(!joined)return;
+    int ci=binding_cluster_index(c->cluster);
+    bool bound=ci>=0 && (cluster_masks[ci] & (1U<<i));
+    bool direct=command_direct(c,bound);
+    if(command_reports(c,bound,binding_priority[i])) {
+        send_action(i,c->action);
+        ESP_LOGI(TAG,"CH%u action=%u to Z2M",i+1,c->action);
     }
-    ESP_LOGI(TAG, "CH%u command=%d via %s", i + 1, action, direct ? "binding" : "Z2M action");
+    if(!direct)return;
+    uint8_t frame[16];
+    size_t length=command_frame(c,aps_sequence++,frame,sizeof(frame));
+    if(!length)return;
+    esp_zb_apsde_data_req_t req={
+        .dst_addr_mode=c->group ? ESP_ZB_APS_ADDR_MODE_16_GROUP_ENDP_NOT_PRESENT : ESP_ZB_APS_ADDR_MODE_DST_ADDR_ENDP_NOT_PRESENT,
+        .src_endpoint=i+1,.profile_id=ESP_ZB_AF_HA_PROFILE_ID,.cluster_id=c->cluster,
+        .asdu_length=length,.asdu=frame,.radius=30,
+    };
+    if(c->group)req.dst_addr.addr_short=c->group;
+    esp_err_t err=esp_zb_aps_data_request(&req);
+    ESP_LOGI(TAG,"CH%u cluster=0x%04x command=0x%02x direct: %s",i+1,c->cluster,c->id,esp_err_to_name(err));
 }
 
 // Runs on the Zigbee scheduler: all app state and stack calls share one context.
@@ -195,14 +251,22 @@ static void tick(uint8_t unused) {
     uint64_t now = now_ms();
     refresh_bindings(now);
     update_route();
+    serial_input_tick(&serial_input,now);
+    serial_transport_poll(&serial_input,cfg.channels,binding_priority,joined && bindings_known,now);
     for (unsigned i = 0; i < CHANNELS; ++i) {
-        if (rebase[i]) { input_init(&inputs[i], active(i), now); rebase[i] = false; }
-        if (!bindings_known) continue; // Wait for the first local snapshot before choosing a path.
-        int action = input_sample(&inputs[i], active(i), cfg.mode[i], now);
-        if (action != ACTION_NONE) button_action(i, action);
+        command_t command;
+        if (rebase[i]) {
+            if(button_cancel(&inputs[i],&command))dispatch(i,&command);
+            button_init(&inputs[i],active(i),now);rebase[i]=false;
+        }
+        if (!bindings_known) continue;
+        if(button_poll(&inputs[i],active(i),&cfg.channels[i],now,&command))dispatch(i,&command);
     }
     if (dirty && now - dirty_at >= 1000) {
-        esp_err_t err = nvs_set_blob(nv, "config", &cfg, sizeof(cfg));
+        esp_err_t err = nvs_set_blob(nv, "config2", &cfg, sizeof(cfg));
+        uint8_t priorities=0;
+        for(unsigned i=0;i<CHANNELS;++i)priorities |= (binding_priority[i]!=0)<<i;
+        if (err == ESP_OK) err = nvs_set_u8(nv, "bind_priority", priorities);
         if (err == ESP_OK) err = nvs_commit(nv);
         if (err == ESP_OK) { dirty = false; ESP_LOGI(TAG, "Configuration saved to NVS"); }
         else { ESP_LOGE(TAG, "Configuration persistence failed: %s", esp_err_to_name(err)); dirty_at = now; }
@@ -211,8 +275,8 @@ static void tick(uint8_t unused) {
         if (!boot_held) { boot_held = true; boot_pressed_at = now; }
         if (now - boot_pressed_at >= 8000) {
             ESP_LOGW(TAG, "Factory reset: configuration, network and bindings");
-            esp_err_t err = nvs_erase_key(nv, "config");
-            ESP_ERROR_CHECK(err == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : err);
+            esp_err_t err=nvs_erase_all(nv);
+            ESP_ERROR_CHECK(err);
             ESP_ERROR_CHECK(nvs_commit(nv));
             esp_zb_factory_reset();
             return;
@@ -255,6 +319,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *s) {
         joined = false;
         bindings_known = scan_active = coordinator_known = false;
         bound_mask = 0;
+        memset(cluster_masks,0,sizeof(cluster_masks));
         ++scan_generation;
         next_scan_ms = 0;
         esp_zb_scheduler_alarm(commission, ESP_ZB_BDB_MODE_NETWORK_STEERING, 3000);
@@ -280,7 +345,7 @@ static void zigbee_task(void *arg) {
     esp_zb_init(&network);
     esp_zb_ep_list_t *eps = esp_zb_ep_list_create();
     static char manufacturer[] = "\x08" "DIY-XIAO";
-    static char model[] = "\x11" "XIAO-C6-4CH-FAIL1";
+    static char model[] = "\x0b" "XIAO-C6-8CH";
     const uint8_t rw = ESP_ZB_ZCL_ATTR_ACCESS_READ_WRITE;
     const uint8_t rr = ESP_ZB_ZCL_ATTR_ACCESS_READ_ONLY | ESP_ZB_ZCL_ATTR_ACCESS_REPORTING;
     for (uint8_t ep = 1; ep <= CHANNELS; ++ep) {
@@ -289,9 +354,26 @@ static void zigbee_task(void *arg) {
         esp_zb_attribute_list_t *basic = esp_zb_cluster_list_get_cluster(clusters, ESP_ZB_ZCL_CLUSTER_ID_BASIC, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
         ESP_ERROR_CHECK(esp_zb_basic_cluster_add_attr(basic, ESP_ZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID, manufacturer));
         ESP_ERROR_CHECK(esp_zb_basic_cluster_add_attr(basic, ESP_ZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID, model));
+        // Empty client attribute lists advertise the clusters used by outgoing bound commands.
+        ESP_ERROR_CHECK(esp_zb_cluster_list_add_level_cluster(clusters,esp_zb_zcl_attr_list_create(CL_LEVEL),ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE));
+        ESP_ERROR_CHECK(esp_zb_cluster_list_add_color_control_cluster(clusters,esp_zb_zcl_attr_list_create(CL_COLOR),ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE));
+        if(!esp_zb_cluster_list_get_cluster(clusters,CL_SCENES,ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE))
+            ESP_ERROR_CHECK(esp_zb_cluster_list_add_scenes_cluster(clusters,esp_zb_zcl_attr_list_create(CL_SCENES),ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE));
         esp_zb_attribute_list_t *custom = esp_zb_zcl_attr_list_create(CLUSTER);
-        add_custom(custom, ATTR_MODE, ESP_ZB_ZCL_ATTR_TYPE_U8, rw, &cfg.mode[ep - 1]);
-        add_custom(custom, ATTR_INVERT, ESP_ZB_ZCL_ATTR_TYPE_BOOL, rw, &cfg.invert[ep - 1]);
+        channel_config_t *c=&cfg.channels[ep-1];
+        add_custom(custom, ATTR_MODE, ESP_ZB_ZCL_ATTR_TYPE_U8, rw, &c->input_mode);
+        add_custom(custom, ATTR_INVERT, ESP_ZB_ZCL_ATTR_TYPE_BOOL, rw, &c->invert);
+        add_custom(custom,ATTR_FUNCTION,ESP_ZB_ZCL_ATTR_TYPE_U8,rw,&c->function);
+        add_custom(custom,ATTR_ACTION,ESP_ZB_ZCL_ATTR_TYPE_U8,rw,&c->switch_action);
+        add_custom(custom,ATTR_MIN,ESP_ZB_ZCL_ATTR_TYPE_U8,rw,&c->min_level);
+        add_custom(custom,ATTR_MAX,ESP_ZB_ZCL_ATTR_TYPE_U8,rw,&c->max_level);
+        add_custom(custom,ATTR_TRANSITION,ESP_ZB_ZCL_ATTR_TYPE_U16,rw,&c->transition_time);
+        add_custom(custom,ATTR_COLOR_MIN,ESP_ZB_ZCL_ATTR_TYPE_U16,rw,&c->color_min);
+        add_custom(custom,ATTR_COLOR_MAX,ESP_ZB_ZCL_ATTR_TYPE_U16,rw,&c->color_max);
+        add_custom(custom,ATTR_SCENE,ESP_ZB_ZCL_ATTR_TYPE_U8,rw,&c->scene_id);
+        add_custom(custom,ATTR_SCENE_GROUP,ESP_ZB_ZCL_ATTR_TYPE_U16,rw,&c->scene_group);
+        add_custom(custom,ATTR_BINDING_PRIORITY,ESP_ZB_ZCL_ATTR_TYPE_BOOL,rw,&binding_priority[ep-1]);
+        add_custom(custom,ATTR_BINDING_CLUSTERS,ESP_ZB_ZCL_ATTR_TYPE_U8,rr,&binding_clusters[ep-1]);
         add_custom(custom, ATTR_EVENT, ESP_ZB_ZCL_ATTR_TYPE_U32, rr, &events[ep - 1]);
         add_custom(custom, ATTR_CHANNEL_ROUTE, ESP_ZB_ZCL_ATTR_TYPE_U8, rr, &channel_route[ep - 1]);
         add_custom(custom, ATTR_BINDING_STATUS, ESP_ZB_ZCL_ATTR_TYPE_U8, rr, &binding_status[ep - 1]);
@@ -319,29 +401,47 @@ void app_main(void) {
     // Do not silently erase persisted network/configuration on NVS errors.
     ESP_ERROR_CHECK(err);
     ESP_ERROR_CHECK(nvs_open("xiao4", NVS_READWRITE, &nv));
-    size_t size = sizeof(cfg);
+    for(unsigned i=0;i<CHANNELS;++i)channel_defaults(&cfg.channels[i]);
+    size_t size=sizeof(cfg);
     typeof(cfg) loaded;
-    err = nvs_get_blob(nv, "config", &loaded, &size);
-    if (err == ESP_OK && size == sizeof(cfg) && loaded.version == 1) {
-        bool valid = true;
-        for (unsigned i = 0; i < CHANNELS; ++i) valid &= loaded.mode[i] <= 1 && loaded.invert[i] <= 1;
-        if (valid) cfg = loaded;
+    err=nvs_get_blob(nv,"config2",&loaded,&size);
+    if(err==ESP_OK && size==sizeof(cfg) && loaded.version==2) {
+        bool valid=true;
+        for(unsigned i=0;i<CHANNELS;++i)valid &= channel_valid(&loaded.channels[i]);
+        if(valid)cfg=loaded;
+    } else if(err==ESP_ERR_NVS_NOT_FOUND) {
+        struct {uint8_t version,mode[4],invert[4];uint16_t reserved;} old;
+        size=sizeof(old);
+        if(nvs_get_blob(nv,"config",&old,&size)==ESP_OK && size==sizeof(old) && old.version==1) {
+            for(unsigned i=0;i<4;++i)if(old.mode[i]<=1 && old.invert[i]<=1) {
+                cfg.channels[i].input_mode=old.mode[i];cfg.channels[i].invert=old.invert[i];
+            }
+            dirty=true;dirty_at=now_ms();
+            ESP_LOGI(TAG,"Migrated first four input settings from firmware 1.x");
+        }
     }
+    uint8_t priorities=0xff; // New and upgraded devices default to ON on all eight channels.
+    err=nvs_get_u8(nv,"bind_priority",&priorities);
+    if(err!=ESP_OK && err!=ESP_ERR_NVS_NOT_FOUND) ESP_ERROR_CHECK(err);
+    for(unsigned i=0;i<CHANNELS;++i)binding_priority[i]=(priorities>>i)&1;
     gpio_config_t output = {.pin_bit_mask = (1ULL << 3) | (1ULL << 14), .mode = GPIO_MODE_INPUT_OUTPUT};
     ESP_ERROR_CHECK(gpio_config(&output));
     gpio_set_level(GPIO_NUM_3, 0); // Enable RF switch on XIAO.
     gpio_set_level(GPIO_NUM_14, EXTERNAL_ANTENNA);
     ESP_LOGI(TAG, "Antenna: %s (RF enable=%d, select=%d)", EXTERNAL_ANTENNA ? "external" : "internal",
              gpio_get_level(GPIO_NUM_3), gpio_get_level(GPIO_NUM_14));
+    uint64_t input_mask=1ULL<<9; // BOOT plus the eight channel pins.
+    for(unsigned i=0;i<CHANNELS;++i)input_mask |= 1ULL<<pins[i];
     gpio_config_t input = {
-        .pin_bit_mask = (1ULL << 0) | (1ULL << 1) | (1ULL << 2) | (1ULL << 21) | (1ULL << 9),
+        .pin_bit_mask = input_mask,
         .mode = GPIO_MODE_INPUT, .pull_up_en = GPIO_PULLUP_ENABLE,
     };
     ESP_ERROR_CHECK(gpio_config(&input));
     for (unsigned i = 0; i < CHANNELS; ++i) {
-        input_init(&inputs[i], active(i), now_ms());
+        button_init(&inputs[i], active(i), now_ms());
         events[i] = (esp_random() & 0xffffff) << 8; // Avoid reusing event counters after a reboot.
     }
+    serial_transport_start();
     esp_zb_platform_config_t platform = {
         .radio_config.radio_mode = ZB_RADIO_MODE_NATIVE,
         .host_config.host_connection_mode = ZB_HOST_CONNECTION_MODE_NONE,

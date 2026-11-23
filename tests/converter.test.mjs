@@ -2,17 +2,17 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {prepareDefinition} from 'zigbee-herdsman-converters';
 import {Zcl} from 'zigbee-herdsman';
-import source from '../zigbee2mqtt/xiao-c6-4ch.mjs';
+import source from '../zigbee2mqtt/xiao-c6-8ch.mjs';
 
 const definition = prepareDefinition(source);
-const fz = definition.fromZigbee.find((c) => c.cluster === 'xiao4Control');
+const fz = definition.fromZigbee.find((c) => c.cluster === 'xiaoControl');
 // Mirror Z2M publish.ts dispatch: strip endpoint suffix before converter lookup,
 // invoke each converter at most once per endpoint, then suffix optimistic state.
 async function dispatch(message, meta, operation = 'convertSet') {
     const used = new Map();
     const published = {};
     for (const [property, value] of Object.entries(message)) {
-        const match = /^(.*?)_(ch[1-4])$/.exec(property);
+        const match = /^(.*?)_(ch[1-8])$/.exec(property);
         const key = match ? match[1] : property;
         const endpointName = match?.[2];
         const ep = endpointName ? definition.endpoint(meta.device)[endpointName] : 1;
@@ -41,7 +41,7 @@ const tz = {
 function fixture() {
     const calls = [];
     const customClusters = {};
-    const endpoints = Array.from({length: 4}, (_, i) => ({
+    const endpoints = Array.from({length: 8}, (_, i) => ({
         ID: i + 1,
         write: async (cluster, values, options) => {
             const schema = Zcl.Utils.getCluster(cluster, undefined, customClusters);
@@ -77,15 +77,15 @@ test('real Z2M definition prepares and registers schema before configuration rea
     const {device, calls} = fixture();
     await definition.configure(device, {}, definition);
     assert.equal(calls[0].kind, 'cluster');
-    assert.deepEqual(calls.filter((x) => x.kind === 'read').map((x) => x.ep), [1, 2, 3, 4]);
-    assert.deepEqual(definition.endpoint(device), {ch1: 1, ch2: 2, ch3: 3, ch4: 4});
-    assert.equal(definition.exposes.find((x) => x.name === 'action').values.length, 12);
+    assert.deepEqual([...new Set(calls.filter((x) => x.kind === 'read').map((x) => x.ep))], [1,2,3,4,5,6,7,8]);
+    assert.deepEqual(definition.endpoint(device), Object.fromEntries(Array.from({length:8},(_,i)=>[`ch${i+1}`,i+1])));
+    assert.equal(definition.exposes.find((x) => x.name === 'action').values.length, 152);
 });
 
 test('each setting reaches only its channel, with real Zigbee attribute encoding', async () => {
     const {device, calls, meta} = fixture();
     await definition.configure(device, {}, definition);
-    for (let ep = 1; ep <= 4; ++ep) {
+    for (let ep = 1; ep <= 8; ++ep) {
         const result = await tz.convertSet(null, `input_mode_ch${ep}`, 'rocker', meta);
         assert.deepEqual(result, {state: {[`input_mode_ch${ep}`]: 'rocker'}});
         assert.equal(calls.findLast((x) => x.kind === 'write').ep, ep);
@@ -104,7 +104,7 @@ test('only per-channel settings remain; removed heartbeat attributes are absent'
     for (const key of ['heartbeat', 'fallback_timeout']) {
         assert.ok(!definition.toZigbee.some((c) => c.key?.includes(key)));
     }
-    const schema = device.customClusters.xiao4Control;
+    const schema = device.customClusters.xiaoControl;
     for (const name of ['heartbeat', 'timeout', 'challenge', 'route']) assert.equal(schema.attributes[name], undefined);
     for (const name of ['heartbeat', 'heartbeat_challenge', 'fallback_timeout', 'z2m_online']) {
         assert.ok(!definition.exposes.some((e) => e.name === name));
@@ -123,15 +123,15 @@ test('Z2M dispatch preserves multiple settings on each channel and publishes no 
     const writes = calls.filter((x) => x.kind === 'write');
     assert.deepEqual(writes.map((x) => x.ep), [1, 1, 2, 2]);
     assert.deepEqual(writes.map((x) => x.parsed[0].attrId), [1, 2, 1, 2]);
-    for (let i = 1; i <= 4; ++i) {
+    for (let i = 1; i <= 8; ++i) {
         const expose = definition.exposes.find((x) => x.property === `input_mode_ch${i}`);
         assert.equal(expose.name, 'input_mode');
         assert.equal(expose.endpoint, `ch${i}`);
     }
 });
 
-test('four channels and all commands decode independently, duplicate reports are suppressed', () => {
-    for (let ep = 1; ep <= 4; ++ep) {
+test('eight channels and original On/Off commands decode independently, duplicate reports are suppressed', () => {
+    for (let ep = 1; ep <= 8; ++ep) {
         const endpoint = {ID: ep};
         for (let cmd = 0; cmd < 3; ++cmd) {
             const event = ((cmd + 1) << 8) | cmd;
@@ -154,8 +154,8 @@ test('reads do not produce actions and legacy heartbeat reports have no effect',
     assert.equal(fz.convert(definition, {
         endpoint, type: 'attributeReport', data: {challenge: 42, route: 1, timeout: 20},
     }), undefined);
-    assert.equal(fz.convert(definition, {endpoint: {ID: 5}, type: 'attributeReport', data: {event: 258}}), undefined);
-    assert.equal(fz.convert(definition, {endpoint, type: 'attributeReport', data: {event: 259}}), undefined);
+    assert.equal(fz.convert(definition, {endpoint: {ID: 9}, type: 'attributeReport', data: {event: 258}}), undefined);
+    assert.equal(fz.convert(definition, {endpoint, type: 'attributeReport', data: {event: 300}}), undefined);
 });
 
 test('actual firmware-format attribute report parses with the registered custom schema', async () => {
@@ -163,13 +163,13 @@ test('actual firmware-format attribute report parses with the registered custom 
     await definition.configure(device, {}, definition);
     const bytes = Buffer.from([0x18, 0x7a, 0x0a, 0x12, 0x00, 0x20, 0x00]);
     const parsed = Zcl.Frame.fromBuffer(0xfc00, Zcl.Header.fromBuffer(bytes), bytes, device.customClusters);
-    assert.equal(parsed.cluster.name, 'xiao4Control');
+    assert.equal(parsed.cluster.name, 'xiaoControl');
     const data = Object.fromEntries(parsed.payload.map((a) => [Zcl.Utils.getClusterAttribute(parsed.cluster, a.attrId, undefined).name, a.attrData]));
     assert.deepEqual(fz.convert(definition, {endpoint: {ID: 1}, type: 'attributeReport', data}), {control_path_ch1: 'binding'});
 });
 
-test('independent binding and route diagnostics decode on all four endpoints', () => {
-    for (let ep = 1; ep <= 4; ++ep) {
+test('independent binding and route diagnostics decode on all eight endpoints', () => {
+    for (let ep = 1; ep <= 8; ++ep) {
         for (let status = 0; status <= 2; ++status) {
             for (let route = 0; route <= 1; ++route) {
                 assert.deepEqual(fz.convert(definition, {
@@ -179,4 +179,101 @@ test('independent binding and route diagnostics decode on all four endpoints', (
             }
         }
     }
+});
+
+test('all thirteen mode IDs and uint16 settings encode correctly on eight endpoints', async () => {
+    const {device, calls, meta} = fixture();
+    await definition.configure(device, {}, definition);
+    const modes = definition.exposes.find((e) => e.property === 'switch_type_ch1').values;
+    assert.equal(modes.length, 13);
+    for (let ep = 1; ep <= 8; ++ep) {
+        for (let mode = 0; mode < modes.length; ++mode) {
+            await dispatch({[`switch_type_ch${ep}`]: modes[mode]}, meta);
+            const write = calls.findLast((x) => x.kind === 'write');
+            assert.equal(write.ep, ep); assert.equal(write.parsed[0].attrId, 5); assert.equal(write.parsed[0].attrData, mode);
+        }
+        await dispatch({[`transition_time_ch${ep}`]: 600, [`group_id_ch${ep}`]: 0xfff7}, meta);
+        const writes = calls.filter((x) => x.kind === 'write').slice(-2);
+        assert.equal(writes[0].parsed[0].dataType, 0x21); assert.equal(writes[0].parsed[0].attrData, 600);
+        assert.equal(writes[1].parsed[0].attrData, 0xfff7);
+    }
+    for (const [key, value] of [['transition_time_ch8',601],['group_id_ch8',0xfff8],['min_level_ch8',0],['color_temp_max_ch8',1001]]) {
+        await assert.rejects(dispatch({[key]:value},meta));
+    }
+});
+
+test('production C gesture frames decode as standard Level/Color/Scene commands in herdsman', async () => {
+    const {execFileSync} = await import('node:child_process');
+    const {mkdtempSync, rmSync} = await import('node:fs');
+    const {tmpdir} = await import('node:os');
+    const {join} = await import('node:path');
+    const dir = mkdtempSync(join(tmpdir(), 'xiao-frame-test-'));
+    try {
+        const exe = join(dir,'frames');
+        execFileSync('cc',['-std=c11','-Wall','-Wextra','-Werror','-I','firmware/main',
+            'firmware/main/control.c','tests/frame_harness.c','-o',exe]);
+        const lines = execFileSync(exe,{encoding:'utf8'}).trim().split('\n');
+        assert.ok(lines.length > 30);
+        const safeKinds = new Set();
+        let colors=0, scenes=0;
+        for (const line of lines) {
+            const [modeText,phase,clusterText,hex] = line.split(' ');
+            const mode=Number(modeText),cluster=Number(clusterText),bytes=Buffer.from(hex,'hex');
+            const parsed=Zcl.Frame.fromBuffer(cluster,Zcl.Header.fromBuffer(bytes),bytes,{});
+            if (mode>=10) {
+                assert.equal(cluster,8); assert.ok([0,2,3].includes(parsed.command.ID));
+                assert.equal(parsed.payload.optionsMask,1); assert.equal(parsed.payload.optionsOverride,0);
+                safeKinds.add(parsed.command.ID);
+            }
+            if (cluster===8 && phase==='double') assert.equal(parsed.payload.stepsize,25);
+            if (cluster===0x300) {
+                ++colors;
+                if(parsed.command.ID===0x4c) {
+                    assert.equal(parsed.payload.stepsize,87);assert.equal(parsed.payload.minimum,153);assert.equal(parsed.payload.maximum,500);
+                }
+            }
+            if(cluster===5) {++scenes;assert.equal(parsed.command.ID,5);assert.equal(parsed.payload.groupid,123);assert.equal(parsed.payload.sceneid,8);}
+        }
+        assert.deepEqual([...safeKinds].sort(),[0,2,3]);assert.ok(colors>0 && scenes>0);
+    } finally {rmSync(dir,{recursive:true,force:true});}
+});
+
+test('all 152 channel/action combinations publish the matching gesture or lighting action', () => {
+    const values=definition.exposes.find((e)=>e.name==='action').values;
+    for(let ep=1;ep<=8;++ep){
+        const endpoint={ID:ep},names=values.filter((name)=>name.startsWith(`ch${ep}_`));
+        assert.equal(names.length,19);
+        for(let id=0;id<19;++id){
+            assert.deepEqual(fz.convert(definition,{endpoint,type:'attributeReport',data:{event:((id+1)<<8)|id}}),{action:names[id]});
+        }
+    }
+});
+
+
+test('binding priority is independently writable/readable on all eight endpoints as ON/OFF', async () => {
+    const {device, calls, meta} = fixture();
+    await definition.configure(device, {}, definition);
+    for (let ep = 1; ep <= 8; ++ep) {
+        assert.ok(calls.some((x) => x.kind === 'read' && x.ep === ep && x.attributes.includes('bindingPriority')));
+        const expose = definition.exposes.find((x) => x.property === `binding_priority_ch${ep}`);
+        assert.equal(expose.value_on, 'ON');
+        assert.equal(expose.value_off, 'OFF');
+        for (const [value, encoded] of [['ON', 1], ['OFF', 0]]) {
+            assert.deepEqual(await tz.convertSet(null, `binding_priority_ch${ep}`, value, meta),
+                {state: {[`binding_priority_ch${ep}`]: value}});
+            const write = calls.findLast((x) => x.kind === 'write');
+            assert.equal(write.ep, ep);
+            assert.deepEqual(write.parsed, [{attrId: 14, dataType: 0x10, attrData: encoded}]);
+            for (const type of ['readResponse', 'attributeReport']) {
+                assert.deepEqual(fz.convert(definition, {endpoint: device.getEndpoint(ep), type, data: {bindingPriority: encoded}}),
+                    {[`binding_priority_ch${ep}`]: value});
+            }
+        }
+        await tz.convertGet(null, `binding_priority_ch${ep}`, meta);
+        assert.deepEqual(calls.at(-1).attributes, ['bindingPriority']);
+    }
+    for (const bad of [true, false, 'unknown', 2, null])
+        await assert.rejects(tz.convertSet(null, 'binding_priority_ch1', bad, meta));
+    assert.deepEqual(await dispatch({binding_priority_ch1:'OFF', binding_priority_ch2:'ON', invert_ch1:true}, meta),
+        {state:{binding_priority_ch1:'OFF', binding_priority_ch2:'ON', invert_ch1:true}});
 });

@@ -13,7 +13,7 @@ p = argparse.ArgumentParser()
 p.add_argument("--idf-path", type=Path, required=True)
 args = p.parse_args()
 root = Path(__file__).resolve().parents[1]
-release_name = "xiao-4ch-v1.2.0"
+release_name = "xiao-8ch-v2.0.0"
 staging = tempfile.TemporaryDirectory(prefix="xiao-release-")
 out = Path(staging.name) / release_name
 out.mkdir(parents=True)
@@ -24,9 +24,9 @@ subprocess.run([
     "--flash_size", "4MB", "--flash_freq", "80m",
     "0x0", str(build / "bootloader/bootloader.bin"),
     "0x8000", str(build / "partition_table/partition-table.bin"),
-    "0x10000", str(build / "xiao_zigbee_4ch.bin"),
+    "0x10000", str(build / "xiao_zigbee_8ch.bin"),
 ], check=True)
-shutil.copy2(build / "xiao_zigbee_4ch.bin", out / "application.bin")
+shutil.copy2(build / "xiao_zigbee_8ch.bin", out / "application.bin")
 for directory in ["zigbee2mqtt", "docs", "tests", "scripts"]:
     shutil.copytree(root / directory, out / directory, dirs_exist_ok=True)
 shutil.copytree(root / "firmware", out / "firmware", dirs_exist_ok=True,
@@ -45,14 +45,23 @@ for component in ["esp-zboss-lib", "esp-zigbee-lib"]:
     "Zigbee SDK: https://github.com/espressif/esp-zigbee-sdk/tree/release/v1.0\n"
 )
 manifest = {
-    "version": "1.2.0", "target": "esp32c6", "board": "Seeed Studio XIAO ESP32-C6",
+    "version": "2.0.0", "target": "esp32c6", "board": "Seeed Studio XIAO ESP32-C6",
     "esp_idf": "5.4.2", "esp_zigbee_lib": "1.6.9", "esp_zboss_lib": "1.6.9",
     "converter_tested_with": "zigbee-herdsman-converters 26.135.0",
-    "converter_revision": "1.2.0",
+    "converter_revision": "2.0.0",
     "hardware_tested": False,
     "hardware_boot_tested": True,
     "antenna": "external",
-    "routing": "binding_if_bound_otherwise_action",
+    "routing": "per_cluster_binding_otherwise_action",
+    "binding_priority": {"per_channel": True, "default": "ON", "persistent": True,
+                         "off_behavior": "direct_control_and_action"},
+    "channels": 8,
+    "channel_gpio": [0, 1, 2, 21, 22, 23, 19, 20],
+    "uart": {"tx_gpio": 16, "rx_gpio": 17, "baud": 115200, "format": "8N1",
+             "protocol": "ascii_buttons_v1", "hold_timeout_ms": 10000,
+             "dedicated_task": True, "queue_depth": 8, "commands_per_tick": 1,
+             "get_configuration": True, "reply_max_bytes": 767},
+    "modes": 13,
     "images": [{"file": name, "offset": offset, "bytes": (out / name).stat().st_size,
                 "sha256": hashlib.sha256((out / name).read_bytes()).hexdigest()}
                for name, offset in [("firmware-factory.bin", "0x0"), ("application.bin", "0x10000")]],
