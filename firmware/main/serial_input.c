@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "serial_input.h"
 #include <stdio.h>
+#include <inttypes.h>
 #include <string.h>
 
 void serial_input_cancel(serial_input_t *s, unsigned channel) {
@@ -22,24 +23,47 @@ void serial_input_tick(serial_input_t *s, uint64_t now) {
 }
 static bool number(const char *s,unsigned *value) {
     if(!s || !*s)return false;
-    unsigned n=0;
+    uint32_t n=0;
     for(;*s;++s) {
-        if(*s<'0'||*s>'9'||n>10000)return false;
-        n=n*10+(unsigned)(*s-'0');
+        if(*s<'0'||*s>'9')return false;
+        uint32_t digit=(unsigned)(*s-'0');
+        if(n>(UINT32_MAX-digit)/10)return false;
+        n=n*10+digit;
     }
     *value=n;return true;
 }
 static serial_parse_result_t parse(serial_parser_t *s,serial_command_t *command,char *reply,size_t cap) {
-    char *parts[4]={0},*save=NULL;
-    unsigned count=0;
-    for(char *p=strtok_r(s->line," \t",&save);p;p=strtok_r(NULL," \t",&save)) {
+    *command=(serial_command_t){.duration=100};
+    char *save=NULL,*first=strtok_r(s->line," \t",&save);
+    if(!first)return SERIAL_PARSE_NONE;
+    if(first[0]=='@') {
+        unsigned id;
+        if(!number(first+1,&id)||!id) {snprintf(reply,cap,"ERR ID\n");return SERIAL_PARSE_ERROR;}
+        command->has_id=true;command->request_id=id;
+        first=strtok_r(NULL," \t",&save);
+        if(!first) {snprintf(reply,cap,"ERR SYNTAX\n");return SERIAL_PARSE_ERROR;}
+    }
+    char *parts[4]={first};unsigned count=1;
+    for(char *p=strtok_r(NULL," \t",&save);p;p=strtok_r(NULL," \t",&save)) {
         if(count==4) {snprintf(reply,cap,"ERR SYNTAX\n");return SERIAL_PARSE_ERROR;}
         parts[count++]=p;
     }
-    if(!count)return SERIAL_PARSE_NONE;
     const char *op=parts[0];
-    *command=(serial_command_t){.duration=100};
-    if(count==1 && !strcmp(op,"PING")) {command->operation=SERIAL_PING;return SERIAL_PARSE_COMMAND;}
+    if(count==1) {
+        if(!strcmp(op,"PING"))command->operation=SERIAL_PING;
+        else if(!strcmp(op,"INFO"))command->operation=SERIAL_INFO;
+        else if(!strcmp(op,"STATUS"))command->operation=SERIAL_STATUS;
+        else if(!strcmp(op,"RESET"))command->operation=SERIAL_RESET;
+        else {snprintf(reply,cap,"ERR SYNTAX\n");return SERIAL_PARSE_ERROR;}
+        return SERIAL_PARSE_COMMAND;
+    }
+    if(!strcmp(op,"LOG")) {
+        if(count!=2 || (strcmp(parts[1],"0") && strcmp(parts[1],"1"))) {
+            snprintf(reply,cap,"ERR SYNTAX\n");return SERIAL_PARSE_ERROR;
+        }
+        command->operation=SERIAL_LOG;command->duration=parts[1][0]=='1';
+        return SERIAL_PARSE_COMMAND;
+    }
     if(count==2 && !strcmp(op,"RELEASE") && !strcmp(parts[1],"ALL")) {
         command->operation=SERIAL_RELEASE_ALL;return SERIAL_PARSE_COMMAND;
     }
@@ -65,6 +89,13 @@ static serial_parse_result_t parse(serial_parser_t *s,serial_command_t *command,
         dbl?SERIAL_DOUBLE:triple?SERIAL_TRIPLE:hold?SERIAL_HOLD:
         !strcmp(parts[2],"ON")?SERIAL_SET_ON:SERIAL_SET_OFF;
     return SERIAL_PARSE_COMMAND;
+}
+void serial_response_tag(const serial_command_t *command,char *reply,size_t cap) {
+    if(!command->has_id)return;
+    char prefix[16];int n=snprintf(prefix,sizeof(prefix),"@%"PRIu32" ",command->request_id);
+    size_t length=strlen(reply);
+    if(n<0 || (size_t)n+length>=cap) {snprintf(reply,cap,"ERR RESPONSE_SIZE\n");return;}
+    memmove(reply+n,reply,length+1);memcpy(reply,prefix,(size_t)n);
 }
 // JSON values are fixed strings and validated numeric configuration, never input text.
 static void describe(unsigned channel,const channel_config_t *cfg,bool priority,char *reply,size_t cap) {
@@ -102,6 +133,7 @@ static void describe(unsigned channel,const channel_config_t *cfg,bool priority,
 void serial_input_execute(serial_input_t *s,const serial_command_t *c,uint64_t now,
                           const channel_config_t *cfg,const uint8_t *binding_priority,bool ready,char *reply,size_t cap) {
     serial_operation_t op=c->operation;
+    if(op>SERIAL_GET) {snprintf(reply,cap,"ERR SYNTAX\n");return;}
     if(op==SERIAL_PING) {snprintf(reply,cap,"OK PING\n");return;}
     if(op==SERIAL_RELEASE_ALL) {
         for(unsigned i=0;i<CHANNELS;++i)serial_input_cancel(s,i);
@@ -130,7 +162,12 @@ void serial_input_execute(serial_input_t *s,const serial_command_t *c,uint64_t n
     snprintf(reply,cap,"OK %s %u\n",names[op],c->channel+1);
 }
 serial_parse_result_t serial_parser_feed(serial_parser_t *s,char byte,serial_command_t *command,char *reply,size_t cap) {
+    if(s->discard_until_lf) {
+        if(byte=='\n')s->discard_until_lf=false;
+        return SERIAL_PARSE_NONE;
+    }
     if(byte=='\n') {
+        *command=(serial_command_t){0};
         s->line[s->length]=0;
         serial_parse_result_t result;
         if(s->overflow) {snprintf(reply,cap,"ERR LINE\n");result=SERIAL_PARSE_ERROR;}
@@ -143,4 +180,8 @@ serial_parse_result_t serial_parser_feed(serial_parser_t *s,char byte,serial_com
     if(s->length+1<sizeof(s->line))s->line[s->length++]=byte;
     else s->overflow=true;
     return SERIAL_PARSE_NONE;
+}
+
+void serial_parser_abort(serial_parser_t *s) {
+    s->length=0;s->overflow=false;s->discard_until_lf=true;
 }

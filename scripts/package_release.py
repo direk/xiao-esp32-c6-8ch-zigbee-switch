@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -11,9 +12,11 @@ import zipfile
 
 p = argparse.ArgumentParser()
 p.add_argument("--idf-path", type=Path, required=True)
+p.add_argument("--hardware-boot-tested", action="store_true", help="Mark this exact firmware as boot-tested on hardware")
 args = p.parse_args()
 root = Path(__file__).resolve().parents[1]
-release_name = "xiao-8ch-v2.0.0"
+firmware_version = re.search(r'set\(PROJECT_VER "([^"]+)"\)', (root / "firmware/CMakeLists.txt").read_text()).group(1)
+release_name = f"xiao-8ch-v{firmware_version}"
 staging = tempfile.TemporaryDirectory(prefix="xiao-release-")
 out = Path(staging.name) / release_name
 out.mkdir(parents=True)
@@ -31,7 +34,7 @@ for directory in ["zigbee2mqtt", "docs", "tests", "scripts"]:
     shutil.copytree(root / directory, out / directory, dirs_exist_ok=True)
 shutil.copytree(root / "firmware", out / "firmware", dirs_exist_ok=True,
                 ignore=shutil.ignore_patterns("build", "managed_components", "sdkconfig", "sdkconfig.old"))
-for name in [".gitignore", "README.md", "LICENSE", "package.json", "package-lock.json"]:
+for name in [".gitignore", "README.md", "CHANGELOG.md", "LICENSE", "package.json", "package-lock.json"]:
     shutil.copy2(root / name, out / name)
 notices = out / "third-party-licenses"
 notices.mkdir(exist_ok=True)
@@ -45,12 +48,12 @@ for component in ["esp-zboss-lib", "esp-zigbee-lib"]:
     "Zigbee SDK: https://github.com/espressif/esp-zigbee-sdk/tree/release/v1.0\n"
 )
 manifest = {
-    "version": "2.0.0", "target": "esp32c6", "board": "Seeed Studio XIAO ESP32-C6",
+    "version": firmware_version, "target": "esp32c6", "board": "Seeed Studio XIAO ESP32-C6",
     "esp_idf": "5.4.2", "esp_zigbee_lib": "1.6.9", "esp_zboss_lib": "1.6.9",
     "converter_tested_with": "zigbee-herdsman-converters 26.135.0",
     "converter_revision": "2.0.0",
     "hardware_tested": False,
-    "hardware_boot_tested": True,
+    "hardware_boot_tested": args.hardware_boot_tested,
     "antenna": "external",
     "routing": "per_cluster_binding_otherwise_action",
     "binding_priority": {"per_channel": True, "default": "ON", "persistent": True,
@@ -58,9 +61,13 @@ manifest = {
     "channels": 8,
     "channel_gpio": [0, 1, 2, 21, 22, 23, 19, 20],
     "uart": {"tx_gpio": 16, "rx_gpio": 17, "baud": 115200, "format": "8N1",
-             "protocol": "ascii_buttons_v1", "hold_timeout_ms": 10000,
+             "protocol": "ascii_buttons_v2", "hold_timeout_ms": 10000,
              "dedicated_task": True, "queue_depth": 8, "commands_per_tick": 1,
-             "get_configuration": True, "reply_max_bytes": 767},
+             "get_configuration": True, "reply_max_bytes": 2063,
+             "info_status": True, "request_ids": "increasing_uint32", "dedup_depth": 16,
+             "receive_error_recovery": True, "reset": "zigbee_network_and_bindings",
+             "usb_commands": True, "sessions": "per_port", "logs_default": False,
+             "log_control": "per_port_LOG_0_1", "log_prefix": "#LOG "},
     "modes": 13,
     "images": [{"file": name, "offset": offset, "bytes": (out / name).stat().st_size,
                 "sha256": hashlib.sha256((out / name).read_bytes()).hexdigest()}

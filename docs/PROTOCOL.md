@@ -1,4 +1,4 @@
-# XIAO-C6-8CH protocol 2.0.0
+# XIAO-C6-8CH protocol 2.1.0
 
 Eight endpoints (1–8), profile 0x0104, manufacturer DIY-XIAO, model XIAO-C6-8CH.
 Every endpoint advertises outgoing On/Off (0x0006), Level Control (0x0008),
@@ -9,15 +9,16 @@ CH1–CH8 use GPIO0/1/2/21/22/23/19/20 (D0–D5, D8, D9).
 UART1 TX/RX GPIO16/17 (D6/D7) accepts ASCII button commands at 115200 8N1.
 The protocol, timing, safety timeout and responses are specified in [UART.md](UART.md).
 Serial button states are ORed with physical inputs before the same gesture planner.
-A separate priority-4 UART task owns RX, parsing and TX. Only typed commands and
+Native USB-C Serial/JTAG accepts the same commands concurrently.
+Each port has its own priority-4 task, parser, request/response/log queues and ID session. Only typed commands and
 replies cross bounded FreeRTOS queues (8 entries each). Zigbee handles at most
-one command per tick using zero-timeout queue operations, reserving reply space
+one command total per tick using fair round-robin, zero-timeout queue operations and reserved reply space
 before execution. All channel state/config access remains in Zigbee context.
 GET 1–8 returns a single JSON line with every channel setting (including binding
 priority), mode-permitted commands and effective gestures. It is read-only and
 works regardless of network readiness or channel BUSY state. Configuration is
 snapshotted when executed in Zigbee context, with UART-task-only transmission.
-Replies use 768-byte buffers; oversized JSON produces ERR RESPONSE_SIZE instead
+Replies use 2048-byte payload buffers plus 16 bytes for optional ID framing; oversized JSON produces ERR RESPONSE_SIZE instead
 of a truncated object. See UART.md for fields and gesture semantics.
 
 | Attribute | Type | Access | Meaning |
@@ -89,5 +90,35 @@ Rocker is valid only for toggle/momentary and uses closed=ON, open=OFF. Advanced
 functions require push. Min/max pairs and other ranges are validated before writes.
 Configuration is committed after one second without another write.
 
-No application-level retransmission/replay, battery emulation or Zigbee OTA updater.
+No application-level Zigbee retransmission/replay, battery emulation or Zigbee OTA updater.
 Use USB for firmware updates. Zigbee routing/delivery and APS handling remain in SDK.
+
+UART protocol v2 adds INFO/STATUS JSON, RESET and optional `@uint32` IDs.
+IDs increase within a boot; the last 16 full responses are replayed without
+execution. Older IDs outside the cache fail with ERR ID_EXPIRED instead of
+executing again; reusing a cached ID for a different command fails with
+ERR ID_CONFLICT. The boot_id in INFO/STATUS changes on restart; request history
+is RAM-only. Untagged legacy commands retain their behavior.
+
+UART receive error events invalidate the current line, flush input and discard
+through the next LF. Diagnostics use atomic UART counters; only the UART task
+performs UART I/O. PING without an ID is answered locally; all other valid
+requests go through the command queue, including tagged PING.
+
+RESET saves pending xiao4 channel settings, stops active holds, replies, then
+uses esp_zb_factory_reset to erase SDK zb_storage and restart. The unchanged
+startup handler automatically starts network steering when factory-new.
+The app NVS configuration is retained. ACK drain is signaled atomically by the
+UART task; reset waits at least 200ms, with a 2s fallback for failed TX. BOOT's
+existing full factory reset still additionally erases channel configuration.
+RESET is tested via mocked callbacks; no destructive reset is performed by tests.
+
+LOG 0 / LOG 1 toggle normal ESP_LOG output only on the request's port, with no
+NVS persistence. Both ports start OFF on every boot. The logging callback only
+formats/enqueues bounded single-line #LOG records (8 entries/port); device I/O
+is serialized by each port task and replies get priority. Generation tags discard
+stale logs after toggling. INFO/STATUS include port and logs_enabled; log_dropped
+counts queue overflow. UART counters and ID history are independent of USB.
+Physical/virtual channel state and RESET remain global to the device.
+Standard primary/secondary consoles and bootloader logs are disabled in build
+configuration; ROM/panic/previous bootloader output is outside the runtime LOG router.

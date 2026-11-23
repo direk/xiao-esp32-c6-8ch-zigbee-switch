@@ -1,12 +1,12 @@
 # XIAO ESP32-C6 — osiem kanałów Zigbee
 
-Wersja **2.0.0** dla Seeed Studio XIAO ESP32-C6 ze stałym zasilaniem USB i
+Wersja **2.1.0** dla Seeed Studio XIAO ESP32-C6 ze stałym zasilaniem USB i
 zewnętrzną anteną U.FL. Urządzenie pracuje jako router Zigbee, bez usypiania
 i bez heartbeat. Każdy kanał ma własny endpoint, konfigurację i bindingi.
 
 [Kod źródłowy](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch).
-[Wydanie 2.0.0 — firmware, konwerter i kompletna paczka](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch/releases/tag/v2.0.0).
-Skrypt pakujący generuje również lokalne `dist/xiao-8ch-v2.0.0.zip`.
+[Wydanie 2.1.0 — firmware, konwerter i kompletna paczka](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch/releases/tag/v2.1.0).
+Skrypt pakujący generuje również lokalne `dist/xiao-8ch-v2.1.0.zip`.
 [Wydanie 1.2.0 na GitHubie](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch/releases/tag/v1.2.0)
 jest starszą wersją czterokanałową.
 
@@ -35,20 +35,35 @@ D6/TX (GPIO16) i D7/RX (GPIO17) obsługują komendy UART 3,3 V:
 115200 baud, 8N1, bez kontroli przepływu. D10 (GPIO18) pozostaje wolny. CH7/CH8 zajmują D8/D9, więc te piny nie są dostępne dla SPI.
 Przy aktualizacji poprzedniej wersji 8CH przenieś przewód CH7 z D6 na D8,
 a CH8 z D7 na D9. Numery kanałów, ustawienia i bindingi pozostają te same.
-Konsola pozostaje na USB Serial/JTAG (GPIO12/13). GPIO3=LOW i GPIO14=HIGH wybierają
+Te same komendy są dostępne przez USB-C (USB Serial/JTAG, GPIO12/13). GPIO3=LOW i GPIO14=HIGH wybierają
 zewnętrzną antenę; **D3 to GPIO21**, niezależny od GPIO3.
 
-## Przyciski przez UART
+## Przyciski przez UART i USB-C
 
 Urządzenie zewnętrzne może symulować CH1–CH8 przez `PRESS`, `RELEASE`,
 `CLICK`, `DOUBLE`, `TRIPLE`, `HOLD` oraz `SET` dla rocker. Komendy są tekstowe,
 kończone LF; np. `CLICK 2\n` symuluje kliknięcie CH2. Obowiązują te same
-tryby i binding priority co dla fizycznych przycisków. Odbiór i wysyłanie UART
-działają w osobnym zadaniu FreeRTOS; komendy trafiają do Zigbee przez ograniczoną
-kolejkę, bez czekania na UART w obsłudze Zigbee.
+tryby i binding priority co dla fizycznych przycisków. UART i USB-C mają
+osobne zadania FreeRTOS i niezależne sesje identyfikatorów; komendy trafiają do Zigbee przez ograniczoną
+kolejki, bez czekania na porty w obsłudze Zigbee. Odpowiedź wraca na port
+żądania. Pełna kolejka USB nie blokuje UART.
 `GET 2\n` zwraca jedną linię JSON z pełną konfiguracją CH2, dozwolonymi
 komendami UART (`commands`) i gestami dającymi efekt (`gestures`). Odczyt
 nie zmienia kanału i działa również przed gotowością sieci Zigbee.
+
+W protokole UART v2 `INFO` zwraca wersję firmware’u/protokołu i numer uruchomienia,
+a `STATUS` stan sieci, bindingi, wejścia i liczniki błędów. Opcjonalne rosnące
+identyfikatory (np. `@42 CLICK 2`) chronią przed ponownym wykonaniem przy utracie
+odpowiedzi. Błędy odbioru UART odrzucają uszkodzoną linię do następnego LF.
+`RESET` kasuje dane sieci Zigbee i bindingi, zachowuje ustawienia kanałów i
+restartuje urządzenie, które automatycznie rozpoczyna parowanie. W Z2M trzeba
+włączyć Permit join. Zwykłe komendy UART z 2.0.0 nadal działają bez zmian.
+`LOG 0` wyłącza, a `LOG 1` włącza logi tylko na porcie, z którego wysłano
+komendę. Domyślnie oba porty mają logi wyłączone; po restarcie znów są wyłączone.
+Logi mają prefiks `#LOG `, a INFO/STATUS pokazują port i `logs_enabled`.
+Konwerter Z2M z wydania 2.0.0 pozostaje zgodny; klaster ustawień nie zmienił się.
+Wersję 2.1.0 wgrano na XIAO i sprawdzono komendy przez USB.
+[Historia zmian](CHANGELOG.md) · [Zakres wykonanych testów](docs/VALIDATION.md).
 
 Podłącz TX urządzenia do D7/RX, RX do D6/TX i wspólną masę.
 Prawdziwy RS-232 wymaga konwertera poziomów (np. MAX3232); nie podłączaj go
@@ -179,7 +194,7 @@ zgaszone, obie zapalone i zwolnienie przycisku podczas regulacji.
 
 ## Konwerter Z2M i aktualizacja z wersji czterokanałowej
 
-1. Wgraj samą aplikację 2.0.0 pod 0x10000, **bez erase_flash**. Układ partycji
+1. Wgraj samą aplikację 2.1.0 pod 0x10000, **bez erase_flash**. Układ partycji
    pozostaje bez zmian. Firmware migruje ustawienia input_mode/invert CH1–CH4,
    zachowuje sieć i bindingi. CH5–CH8 startują jako push/toggle.
 2. Zastąp poprzedni konwerter plikiem `zigbee2mqtt/xiao-c6-8ch.mjs`.
@@ -204,7 +219,7 @@ i `throttle: 0`. W Z2M wymagającym włączenia zewnętrznych konwerterów ustaw
 
 ## Wgranie obrazów
 
-Rozpakuj `dist/xiao-8ch-v2.0.0.zip`. W katalogu rozpakowanej paczki:
+Rozpakuj `dist/xiao-8ch-v2.1.0.zip`. W katalogu rozpakowanej paczki:
 
 ```sh
 python3 -m venv .venv
@@ -318,7 +333,7 @@ pobiera `esp-zigbee-lib` i `esp-zboss-lib` **1.6.9** na podstawie
 
 Automatycznie powstaną `managed_components/`, `sdkconfig` i `build/`.
 Ustawienia początkowe pochodzą z `sdkconfig.defaults`: router Zigbee, ESP32-C6,
-4 MB flash i konsola USB. Zewnętrzna antena jest wybierana w `main/main.c`
+4 MB flash, komendy przez UART/USB i domyślnie wyłączone logi. Zewnętrzna antena jest wybierana w `main/main.c`
 przez `EXTERNAL_ANTENNA=1`.
 
 Gotowe pliki:
@@ -332,7 +347,7 @@ Gotowe pliki:
 Przy kolejnych zmianach kodu wystarczy `idf.py build`. Ponowne `set-target`
 nie jest potrzebne i może zresetować wygenerowane ustawienia projektu.
 
-### D. Wgranie i odczyt logu — osobny, opcjonalny krok
+### D. Wgranie i sprawdzenie USB — osobny, opcjonalny krok
 
 Sprawdź porty, będąc w aktywnym środowisku ESP-IDF:
 
@@ -348,8 +363,12 @@ idf.py -p PORT flash monitor
 
 Na macOS XIAO zwykle ma port `/dev/cu.usbmodem...`; na Windows np. `COM5`.
 Zamknij inny program używający tego portu. Monitor kończy się przez `Ctrl+]`.
-Pierwszy start powinien pokazać wersję aplikacji i
-`Antenna: external (RF enable=0, select=1)`.
+Logi są domyślnie wyłączone. Aby sprawdzić urządzenie, otwórz port USB
+w terminalu wysyłającym LF/CRLF i wyślij `INFO` — otrzymasz JSON z wersją
+firmware'u. `STATUS` podaje stan Zigbee. Do diagnostyki włącz `LOG 1` na
+wybranym porcie; wyłącz go przez `LOG 0`. Monitor ESP-IDF służy głównie do
+odczytu i może wymagać ręcznego wysłania LF po komendzie. Komunikaty ROM lub
+starego bootloadera podczas restartu nie podlegają LOG.
 
 `idf.py flash` zapisuje osobne obrazy pod ich adresami; przy niezmienionym układzie
 partycji nie kasuje ustawień ani bindingów. Jeśli poprzedni firmware używał innego
@@ -370,6 +389,7 @@ npm test
 npm run test:control
 npm run test:serial
 npm run test:transport
+npm run test:session
 ```
 
 Testy konwertera używają przypiętych zależności z `package-lock.json` i rzeczywistego
@@ -385,7 +405,7 @@ python ../scripts/package_release.py --idf-path "$IDF_PATH"
 ```
 
 Skrypt używa programu esptool zainstalowanego razem z ESP-IDF; nie wymaga
-ręcznego kopiowania obrazów. Utworzy `dist/xiao-8ch-v2.0.0.zip` w głównym
+ręcznego kopiowania obrazów. Utworzy `dist/xiao-8ch-v2.1.0.zip` w głównym
 katalogu projektu i usunie swoje pliki tymczasowe. ZIP zawiera obrazy do wgrania,
 źródła, konwerter, dokumentację, licencje i sumy kontrolne.
 

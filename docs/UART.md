@@ -1,8 +1,9 @@
-# Sterowanie przyciskami przez UART
+# Komendy przez UART i USB-C — protokół v2, firmware 2.1.0
 
 Firmware obsługuje osiem wirtualnych przycisków. Korzystają z tych samych
 ustawień kanałów, logiki gestów, bindingów i `binding_priority` co fizyczne wejścia.
-Konwerter Z2M nie wymaga dodatkowych zmian z powodu UART.
+Konwerter Z2M nie wymaga dodatkowych zmian z powodu portów szeregowych.
+Ten sam protokół działa równocześnie na UART D6/D7 i natywnym USB-C.
 
 ## Połączenie
 
@@ -16,8 +17,73 @@ UART1: **115200 baud, 8N1, bez kontroli przepływu**, poziomy logiczne **3,3 V**
 
 Prawdziwy RS-232 wymaga transceivera poziomów, np. MAX3232 zasilanego 3,3 V.
 Nie podłączaj sygnałów RS-232 ani UART 5 V bezpośrednio do GPIO.
-Konsola i logi pozostają na USB Serial/JTAG. D6/D7 służą do komend,
+USB-C obsługuje te same komendy przez natywny USB Serial/JTAG. D6/D7 służą do komend,
 CH7/CH8 są na D8/D9. Przed aktualizacją usuń stare przyciski z D6/D7.
+
+## USB-C i równoczesna praca portów
+
+Podłącz XIAO kablem USB-C z transmisją danych i otwórz jego port szeregowy,
+np. `/dev/cu.usbmodem...` na macOS lub `COM...` w Windows. Użyj LF/CRLF.
+Możesz ustawić 115200/8N1 w terminalu, ale dla natywnego USB prędkość baud
+nie określa szybkości transmisji. UART D6/D7 nadal wymaga 115200/8N1 i 3,3 V.
+
+Oba porty obsługują wszystkie komendy z tego dokumentu. Odpowiedź wraca
+wyłącznie na port, z którego przyszło żądanie. Każdy port ma własny parser,
+8-elementowe kolejki komend i odpowiedzi, liczniki, pamięć 16 żądań z ID
+oraz osobne zadanie FreeRTOS. Brak odbiorcy lub pełna kolejka USB nie blokuje
+UART ani Zigbee. Zigbee obsługuje łącznie najwyżej jedną komendę na cykl,
+wybierając porty naprzemiennie, gdy oba mają oczekujące komendy.
+
+Kanały, konfiguracja i wirtualne przyciski są **wspólne**. PRESS na UART może
+zostać zwolnione przez RELEASE na USB. RESET dotyczy całego urządzenia.
+Numeracja ID jest niezależna: `@42` na USB i `@42` na UART to dwa różne
+żądania. Zmiana portu nie przenosi ochrony przed powtórzeniem między portami.
+
+Podczas wgrywania firmware'u zamknij terminal korzystający z USB. Po restarcie
+port USB może wymagać ponownego otwarcia. Gdy USB zostanie odłączone podczas
+odpowiedzi, po połączeniu sprawdź INFO/boot_id i powtórz żądanie z tym samym ID
+na tym samym porcie, jeśli urządzenie nie restartowało się. Niepełną linię
+JSON należy odrzucić; nadajnik kończy ją LF przed kolejną odpowiedzią.
+
+## LOG 0 / LOG 1 — niezależne logi portów
+
+**Domyślnie logi są wyłączone na obu portach**, także po restarcie. Stan nie
+jest zapisywany do NVS. Komenda dotyczy wyłącznie portu, na którym ją wysłano:
+
+```text
+> LOG 1
+< OK LOG 1
+#LOG I (1200) xiao8: CH2 action=2 to Z2M
+> LOG 0
+< OK LOG 0
+```
+
+LOG 1 w terminalu USB włącza logi tylko na USB. UART nadal może mieć LOG 0.
+Aby włączyć logi na obu portach, wyślij LOG 1 osobno na każdym. LOG 0 nie
+wyłącza odpowiedzi, komend ani komunikatów ERR. Odczyty INFO i STATUS podają
+`port` (`uart`/`usb`) i `logs_enabled` dla bieżącego portu.
+
+Logi aplikacji/SDK (poziomy INFO, WARN i ERROR) są pojedynczymi liniami
+z prefiksem **`#LOG `**. Wielowierszowe komunikaty są spłaszczane do jednej
+linii, a długie skracane do 255 bajtów z LF. Program obsługujący protokół może
+ignorować linie zaczynające się od #LOG. Odpowiedzi i logi nie mieszają się
+wewnątrz jednej linii, bo fizyczny zapis portu wykonuje tylko jego zadanie.
+
+Logowanie nigdy nie czeka na port w kontekście Zigbee: callback ESP_LOG
+kolejkuje komunikaty bez oczekiwania. Każdy port ma osobną kolejkę 8 logów;
+przy przeciążeniu log jest pomijany i zwiększa `counters.log_dropped`.
+Odpowiedzi mają pierwszeństwo. Po LOG 0 stare oczekujące logi są odrzucane;
+komunikat już wysłany przed potwierdzeniem wyłączenia może być jeszcze widoczny.
+
+LOG można oznaczać ID. Ponowienie tego samego `@ID LOG 1` odtwarza ACK,
+ale nie zmienia ponownie stanu po późniejszym LOG 0. Nowa zmiana wymaga
+nowego wyższego ID, tak jak pozostałe operacje. LOG działa także przed
+parowaniem i podczas reset_pending.
+
+LOG steruje zwykłymi logami aplikacji/SDK po uruchomieniu firmware'u.
+Nowa konfiguracja kompilacji wyłącza standardową konsolę i logi bootloadera,
+ale komunikaty ROM, awarii/panic oraz starego bootloadera pozostawionego przy
+aktualizacji samej aplikacji mogą pojawić się podczas startu poza tym mechanizmem.
 
 ## Format i komendy
 
@@ -30,6 +96,10 @@ Kanał to liczba 1–8.
 | Komenda | Efekt |
 |---|---|
 | `PING` | Odpowiedź `OK PING` |
+| `INFO` | JSON z wersjami, numerem uruchomienia i możliwościami protokołu |
+| `STATUS` | JSON ze stanem sieci, kanałów, kolejek i licznikami błędów |
+| `RESET` | Usuń sieć Zigbee i bindingi, uruchom ponownie i rozpocznij parowanie |
+| `LOG 0` / `LOG 1` | Wyłącz/włącz logi na bieżącym porcie; domyślnie 0 |
 | `GET 2` | Konfiguracja i możliwości CH2 jako jedna linia JSON |
 | `PRESS 2` | Naciśnij wirtualny przycisk CH2 |
 | `RELEASE 2` | Zwolnij wirtualny przycisk CH2, anuluj jego sekwencję |
@@ -52,13 +122,157 @@ Do pojedynczego kliknięcia używaj `CLICK`.
 Sekwencje działają bez oczekiwania na ich zakończenie w odbiorniku komend;
 inny kanał może być obsługiwany równolegle. W czasie sekwencji nowe
 `PRESS`, `SET ON` lub skróty gestów na tym samym kanale zwracają `ERR BUSY`.
-`RELEASE` i `RELEASE ALL` zawsze mogą anulować operację.
+`RELEASE` i `RELEASE ALL` mogą anulować operację. Po przyjęciu RESET
+kolejne operacje sterujące zwracają ERR RESET_PENDING aż do restartu.
 
 `PRESS` i `SET ON` wygasają po 10 sekundach. Powtórzenie tej samej komendy
-odnawia ten czas bez ponownego naciśnięcia. Dla długotrwałego zamknięcia rocker
+bez identyfikatora albo z nowym wyższym ID odnawia ten czas bez ponownego
+naciśnięcia. Ponowienie z tym samym ID zwraca zapamiętaną odpowiedź i **nie
+odnawia** limitu. Dla długotrwałego zamknięcia rocker
 odświeżaj `SET N ON`, np. co 5 sekund. Wygaszenie może wygenerować OFF/Stop/release,
 zależnie od trybu kanału. Wirtualne stany nie są zapisywane do NVS, po restarcie
 wszystkie są zwolnione.
+
+## Identyfikatory i powtarzanie żądań
+
+Dowolną komendę można poprzedzić `@ID` i spacją. ID to liczba 1–4294967295.
+Nowe żądania na każdym porcie wysyłaj z **rosnącymi ID**, np. 1, 2, 3. Prefiks jest częścią
+limitu 63 znaków linii. Stare komendy bez prefiksu są nadal obsługiwane.
+
+```text
+> @42 CLICK 2
+< @42 OK CLICK 2
+> @42 CLICK 2
+< @42 OK CLICK 2
+> @42 CLICK 3
+< @42 ERR ID_CONFLICT
+> @43 GET 2
+< @43 {"channel":2,...}
+```
+
+W przykładzie JSON skrócono dla czytelności. Powtórzone CLICK 2 jest wykonywane
+**tylko raz**. Format odpowiedzi to `@ID ` i dotychczasowy tekst lub JSON z LF.
+Zdejmij prefiks przed parsowaniem JSON. Identyfikator jest normalizowany do
+liczby dziesiętnej: `@00042` i `@42` oznaczają ten sam ID.
+
+Pamięć RAM każdego portu zawiera 16 ostatnich zaakceptowanych żądań z ID i pełne odpowiedzi,
+także błędy BUSY/NOT_READY/STORAGE. Identyczne żądanie zwraca tę samą odpowiedź,
+bez ponownego wykonania i bez przedłużenia przytrzymania. To samo ID z innymi
+argumentami zwraca ERR ID_CONFLICT, dopóki pierwotne żądanie jest w pamięci.
+Starsze ID poza pamięcią oraz nowe żądanie z numerem mniejszym od ostatniego
+zwracają ERR ID_EXPIRED: **nie wykonują się ponownie**. Pamięć odpowiedzi
+obejmuje również INFO/STATUS/GET/PING z ID. Nowy odczyt wymaga nowego ID;
+powtórzenie starego odczytu zwraca stary wynik.
+
+Błędy składni i ERR QUEUE nie rezerwują ID — komenda nie została przyjęta do
+wykonania. Można ponowić ją z tym samym numerem, o ile żadne późniejsze żądanie
+z wyższym ID nie zostało już wykonane. Najprościej wysyłać pojedyncze żądania
+i czekać na odpowiedź przed wysłaniem kolejnego. Po BUSY/NOT_READY zapamiętanym
+w sesji użyj **nowego wyższego ID**, aby podjąć nową próbę.
+
+Restart, utrata zasilania i RESET zerują całą pamięć identyfikatorów. Nie jest
+ona zapisywana do NVS. INFO zwraca losowy `boot_id` danego uruchomienia.
+Po jego zmianie nie ponawiaj automatycznie dawnych operacji — mogły już
+zostać wykonane. Odczytaj stan i rozpocznij nową sesję. Po wyczerpaniu zakresu
+ID potrzebne jest nowe uruchomienie; licznik nie zawija się do 1 w tej samej sesji.
+
+## INFO i STATUS
+
+`INFO` zwraca jedną linię JSON, np.:
+
+```json
+{"firmware":"2.1.0","protocol":2,"model":"XIAO-C6-8CH","boot_id":123456,"channels":8,"baud":115200,"format":"8N1","port":"uart","transports":["uart","usb"],"logs_enabled":false,"request_ids":true,"id_order":"increasing","dedup_depth":16,"hold_timeout_ms":10000,"commands":["PING","INFO","STATUS","GET","PRESS","RELEASE","CLICK","DOUBLE","TRIPLE","HOLD","SET","RELEASE ALL","RESET","LOG"]}
+```
+
+`STATUS` zwraca JSON z następującymi polami:
+
+| Pole | Znaczenie |
+|---|---|
+| `port`, `logs_enabled` | Port odpowiedzi i jego bieżący stan logowania |
+| `boot_id`, `uptime_ms` | Numer uruchomienia i czas od startu w milisekundach |
+| `zigbee.joined` | Urządzenie jest dołączone do sieci; nie jest to test działania Z2M |
+| `zigbee.bindings_known` | Zakończono pełny odczyt lokalnej tabeli bindingów |
+| `zigbee.factory_new` | Stos Zigbee nie ma skonfigurowanej sieci |
+| `zigbee.reset_pending` | Przyjęto RESET i oczekiwany jest restart |
+| `zigbee.short_address` | Adres sieciowy lub null, gdy brak dołączenia |
+| `queues.commands`, `queues.replies` | Liczba oczekujących komend/odpowiedzi; limit 8 każdej kolejki |
+| `channels` | Osiem obiektów z polami opisanymi poniżej |
+| `counters` | Liczniki żądań i diagnostyki UART |
+
+Każdy element `channels` zawiera `channel`, `binding_status`
+(unknown/unbound/bound), `binding_clusters` (bity 1/2/4/8 jak w Z2M),
+`control_path` (binding/z2m/mixed), `physical`, `virtual`, `sequence_active`.
+`physical` uwzględnia invert, `virtual` to wirtualne przytrzymanie, a
+`sequence_active` oznacza sekwencję CLICK/DOUBLE/TRIPLE/HOLD, także przerwę
+między kliknięciami. Suma logiczna physical/virtual jest stanem wejścia przed
+debounce. GET nadal służy do odczytu ustawień i dostępnych gestów kanału.
+
+Liczniki `counters`:
+
+- `requests`: poprawne składniowo żądania pobrane przez Zigbee, także powtórki.
+- `executed`: nowe żądania rozpatrzone przez Zigbee, w tym odczyty i odmowy
+  BUSY/NOT_READY; nie jest to licznik potwierdzonych przełączeń lampy.
+- `duplicates`, `id_conflicts`, `id_expired`: powtórki i błędy identyfikatorów
+  w sesji bieżącego portu.
+- `log_dropped`: logi pominięte z powodu pełnej kolejki bieżącego portu.
+- `rx_bytes`, `rx_lines`, `parse_errors`, `queue_rejected`: ruch UART i odmowy.
+- `fifo_overflows`, `buffer_full`, `frame_errors`, `parity_errors`, `breaks`,
+  `event_queue_full`, `rx_resyncs`, `tx_errors`: diagnostyka transmisji.
+
+Liczniki dotyczą portu, z którego wysłano STATUS (sprzętowe błędy UART na USB
+mają wartość zero). `baud` w INFO opisuje fizyczny UART. Liczniki zerują się przy restarcie, są 32-bitowe i zawijają się po osiągnięciu
+maksimum. Bezpośrednie PING bez ID nie zwiększa requests/executed. STATUS
+obejmuje samo bieżące żądanie. Stan Zigbee/kanałów jest odczytywany w jednym
+kontekście; liczniki UART i zajętość kolejek mogą zmieniać się w trakcie odczytu.
+
+## Błędy odbioru UART i odzyskiwanie komunikacji
+
+Sterownik monitoruje przepełnienie FIFO/bufora RX, błędy ramki/parzystości,
+sygnał BREAK i przepełnienie kolejki zdarzeń. Po wykryciu błędu czyści RX,
+odrzuca niedokończoną linię oraz ignoruje kolejne bajty aż do LF. Wysyła
+**nieoznaczone ID** `ERR UART RX`, ponieważ uszkodzony identyfikator nie jest
+wiarygodny. Szczegół błędu jest widoczny w licznikach STATUS.
+
+Po ERR UART RX wyślij najpierw pustą linię LF, potem PING lub INFO. Jeżeli
+brakuje odpowiedzi na wcześniejsze żądanie z ID, ponów je z tym samym ID w tej
+samej sesji. Już przyjęte poprawne komendy pozostają w kolejce; błąd odbioru
+nie cofa wykonanych operacji. Odzyskiwanie nie zatrzymuje fizycznych wejść ani
+zegara wirtualnych przycisków. Po wykrytym błędzie w połowie `RE...SET` sam
+zachowany fragment nie jest wykonywany jako RESET.
+
+## RESET — zapomnienie sieci Zigbee
+
+```text
+> @100 RESET
+< @100 OK RESET
+```
+
+RESET działa również bez ID, ale nie ma wtedy ochrony przed powtórzeniem.
+Polecenie:
+
+1. Zapisuje oczekujące zmiany ustawień kanałów; przy błędzie zwraca ERR STORAGE
+   i nie rozpoczyna kasowania.
+2. Anuluje sekwencje UART i zatrzymuje aktywne regulacje przycisków.
+3. Zwraca OK RESET. Zadanie UART czeka na opróżnienie TX poza obsługą Zigbee.
+4. Po co najmniej 200 ms wywołuje `esp_zb_factory_reset()`: SDK usuwa lokalne
+   dane sieci Zigbee, klucze i bindingi z partycji zb_storage oraz restartuje
+   urządzenie. Gdy potwierdzenie TX się nie powiedzie, reset następuje po 2 s,
+   aby nie pozostać na stałe w stanie oczekiwania.
+5. Po starcie urządzenie automatycznie próbuje dołączyć do sieci. W Z2M włącz
+   **Permit join**. Przy zamkniętym parowaniu kolejne próby są ponawiane.
+
+Konfiguracja CH1–CH8 i binding priority w NVS pozostaje zachowana. RESET nie
+kasuje firmware’u i nie zmienia anteny. Różni się od przytrzymania BOOT przez
+8 s, które usuwa także ustawienia kanałów. RESET jest lokalnym kasowaniem:
+nie usuwa wpisu urządzenia z bazy koordynatora/HA. W razie potrzeby usuń stary
+wpis w Z2M przed ponownym parowaniem.
+
+OK RESET oznacza przyjęcie żądania, a nie zakończenie kasowania. Do restartu
+nowe komendy sterujące są odrzucane jako ERR RESET_PENDING, a zapisy ustawień
+z Z2M są odrzucane do czasu restartu; odczyty, LOG i PING
+pozostają dostępne. Powtórka tego samego ID przed restartem dostaje ten sam
+ACK bez drugiego resetu. Po restarcie pamięć ID jest pusta: jeśli ACK zaginęło,
+sprawdź nowy boot_id zamiast automatycznie wysyłać RESET ponownie.
 
 ## Odczyt konfiguracji: GET
 
@@ -94,7 +308,7 @@ przez aktualną funkcję. Odczyt nie zmienia stanu ani ustawień, niczego nie
 zapisuje do NVS i nie generuje akcji Zigbee.
 
 - `commands` opisuje dozwolone dla aktualnego push/rocker komendy kanału.
-  Nie obejmuje globalnych `PING` i `RELEASE ALL`. `GET` jest dostępne w obu
+  Nie obejmuje globalnych `PING`, `INFO`, `STATUS`, `RESET`, `LOG` i `RELEASE ALL`. `GET` jest dostępne w obu
   trybach. Nie gwarantuje chwilowej gotowości: wykonanie nadal może zwrócić
   `ERR BUSY`, `ERR NOT_READY` lub `ERR QUEUE`.
 - `gestures` opisuje gesty/zmiany styku dające efekt w wybranej funkcji,
@@ -129,12 +343,13 @@ to `["close","open"]`.
 Przechodzi przez tę samą kolejkę co komendy sterujące; odczyt wykonuje zadanie
 Zigbee, ze spójną konfiguracją i binding priority **z chwili wykonania**, a nie
 z chwili odebrania linii. Dłuższy JSON wysyła zadanie UART; obsługa Zigbee nie
-czeka na transmisję. Odpowiedź ma maksymalnie 767 bajtów, łącznie z LF.
+czeka na transmisję. Bufor transmisji mieści odpowiedź do 2063 bajtów łącznie z LF i opcjonalnym
+prefiksem ID. Niekompletne JSON nie jest wysyłane.
 
 ## Odpowiedzi
 
-Każda niepusta zakończona linia otrzymuje odpowiedź z LF. `GET` zwraca JSON,
-pozostałe komendy potwierdzenia `OK` lub błędy `ERR`. Przykłady:
+Każda niepusta zakończona linia otrzymuje odpowiedź z LF. `GET`, `INFO` i
+`STATUS` zwracają JSON, pozostałe komendy potwierdzenia `OK` lub błędy `ERR`. Przykłady:
 
 ```text
 > PRESS 2
@@ -159,19 +374,27 @@ przełączenia lampy. Nie ma osobnej odpowiedzi po zakończeniu sekwencji.
 | `ERR NOT_READY` | Brak dołączenia do Zigbee lub pierwszego odczytu bindingów |
 | `ERR LINE` | Zbyt długa linia lub niedozwolone znaki |
 | `ERR QUEUE` | Kolejka komend pełna; komenda nie została przyjęta ani wykonana |
+| `ERR ID` | Niepoprawne ID, poza 1–4294967295 |
+| `ERR ID_CONFLICT` | Ten sam zapamiętany ID użyty z innym żądaniem |
+| `ERR ID_EXPIRED` | Stary ID poza pamięcią odpowiedzi lub ID niższy od ostatniego |
+| `ERR RESET_PENDING` | Przyjęto RESET, operacje sterujące czekają na restart |
+| `ERR STORAGE` | Nie zapisano ustawień kanałów; RESET nie został rozpoczęty |
+| `ERR UART RX` | Utrata/niepewność danych UART, odrzucono bieżącą linię |
 | `ERR CONFIG` | Odczyt GET wykrył nieprawidłową konfigurację |
-| `ERR RESPONSE_SIZE` | Bufor nie mieści pełnej odpowiedzi GET; JSON nie jest wysyłany częściowo |
+| `ERR RESPONSE_SIZE` | Bufor nie mieści pełnej odpowiedzi; JSON nie jest wysyłany częściowo |
 
-`PING`, `GET` i zwalnianie przycisków działają także przed gotowością Zigbee.
+`PING`, `INFO`, `STATUS`, `GET`, `RESET`, `LOG` i zwalnianie przycisków działają
+także przed gotowością Zigbee.
 Stan PING potwierdza komunikację UART, nie dostępność Z2M; odpowiada na niego
-zadanie UART bez udziału Zigbee. Przy normalnym sterowaniu wysyłaj kolejną
+zadanie UART bez udziału Zigbee, jeśli PING jest bez ID. PING z ID przechodzi
+przez kolejkę i pamięć odpowiedzi, aby respektować reguły identyfikatorów. Przy normalnym sterowaniu wysyłaj kolejną
 komendę po otrzymaniu odpowiedzi. Przy potokowym wysyłaniu wielu linii lokalne
 błędy składni, ERR QUEUE i PING mogą wyprzedzić odpowiedzi na wcześniejsze
-komendy oczekujące na wykonanie. Nie ma identyfikatorów żądań.
+komendy oczekujące na wykonanie. Z ID odpowiedź można dopasować do żądania.
 
-Odbiór, składnia i wysyłanie odpowiedzi działają w osobnym zadaniu FreeRTOS
-na głównym rdzeniu, z priorytetem 4 (Zigbee: 5). Rdzeń LP nie jest używany.
-Kolejki komend i odpowiedzi mieszczą po 8 elementów. Obsługa Zigbee pobiera
+Odbiór, składnia i wysyłanie odpowiedzi działają w osobnych zadaniach FreeRTOS
+portów na głównym rdzeniu, z priorytetem 4 (Zigbee: 5). Rdzeń LP nie jest używany.
+Każdy port ma kolejki komend i odpowiedzi po 8 elementów. Obsługa Zigbee pobiera
 najwyżej jedną komendę na cykl ok. 10 ms, zawsze bez oczekiwania. Komendę
 wykonuje dopiero, gdy ma miejsce na jej odpowiedź. Przy pełnej kolejce
 odpowiedzi nadal działają przyciski, gesty i limit przytrzymania; kolejne
@@ -180,7 +403,7 @@ komendy czekają. Pełna kolejka komend daje ERR QUEUE bez wykonania żądania.
 UART może czekać na dane lub miejsce do wysłania odpowiedzi wyłącznie w swoim
 zadaniu. Parser UART nie czyta konfiguracji ani nie zmienia stanu przycisków;
 walidacja trybu, gotowości i BUSY odbywa się w momencie wykonania w kontekście
-Zigbee. Stan kanałów nie jest współdzielony do zapisu między zadaniami.
+Zigbee. Stan kanałów zapisuje wyłącznie Zigbee; zadania portów przekazują tylko żądania.
 Ograniczona liczba bajtów na przebieg zadania UART i oddawanie czasu procesora
 zapobiegają nieograniczonej pętli parsowania przy ciągłym napływie danych.
 Nie używaj UART do ciągłego strumienia bez oczekiwania na odpowiedzi.
@@ -207,9 +430,9 @@ Zmiana parametrów wejścia lub funkcji w Z2M anuluje wirtualny stan/sekwencję
 tego kanału i zatrzymuje trwającą regulację. Zmiana `binding_priority` nie
 przerywa operacji. `RELEASE ALL` nie kasuje konfiguracji ani bindingów.
 
-Przy przerwaniu transmisji w połowie linii wyślij najpierw LF, odczytaj odpowiedź,
-a potem `RELEASE ALL` i nową komendę. Protokół nie zapewnia identyfikatorów ani
-deduplikacji żądań: ponowienie `CLICK` po utracie odpowiedzi może ponowić gest.
+Przy utracie odpowiedzi do komendy z ID ponów **dokładnie to samo żądanie**
+z tym samym ID. Nowy ID oznacza nową operację. Bez ID ponowienie `CLICK`
+może wykonać drugi gest. Po restarcie najpierw sprawdź INFO/boot_id.
 
 ## Sprawdzenie
 
@@ -222,7 +445,8 @@ Po wgraniu firmware’u i dołączeniu do sieci:
 5. Sprawdź HOLD/Stop w odpowiednim trybie oraz działanie CH7 i CH8.
 6. Sprawdź oba ustawienia binding priority, binding bez Z2M i 10-sekundowy limit.
 
-Testy na komputerze: `npm test`, `npm run test:serial` i `npm run test:transport`. Test używa produkcyjnego parsera,
+Testy na komputerze: `npm test`, `npm run test:serial`, `npm run test:transport`
+i `npm run test:session`. Test używa produkcyjnego parsera,
 zegara sekwencji i rozpoznawania przycisków; nie zastępuje testu po przewodach.
 
 Test transportu wykonuje produkcyjny kod z zastępczymi kolejkami i sterownikiem

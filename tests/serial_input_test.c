@@ -39,6 +39,8 @@ static void send_ready(const char *text,const char *expected,bool ready) {
 }
 static void send(const char *text,const char *expected) {send_ready(text,expected,true);}
 int main(void) {
+    reset();send("LOG 2\n","ERR SYNTAX\n");send("LOG ON\n","ERR SYNTAX\n");
+    send("LOG\n","ERR SYNTAX\n");send("LOG 1 EXTRA\n","ERR SYNTAX\n");
     reset();send("GET 0\n","ERR CHANNEL\n");send("GET 9\n","ERR CHANNEL\n");
     send("GET -1\n","ERR CHANNEL\n");send("GET 1 EXTRA\n","ERR SYNTAX\n");
     send("GET\n","ERR SYNTAX\n");send("GET ALL\n","ERR CHANNEL\n");

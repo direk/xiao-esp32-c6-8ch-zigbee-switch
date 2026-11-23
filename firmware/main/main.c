@@ -3,6 +3,7 @@
 #include <string.h>
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "esp_app_desc.h"
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -46,7 +47,9 @@ static button_t inputs[CHANNELS];
 static serial_input_t serial_input;
 static bool joined, dirty, rebase[CHANNELS];
 static uint64_t dirty_at, boot_pressed_at;
-static bool boot_held;
+static bool boot_held,reset_pending;
+static uint64_t reset_requested_at;
+static uint32_t serial_boot_id;
 static uint32_t events[CHANNELS];
 static uint8_t channel_route[CHANNELS] = {1,1,1,1,1,1,1,1};
 static uint8_t binding_status[CHANNELS]; // 0=unknown, 1=unbound, 2=bound.
@@ -61,7 +64,8 @@ static esp_zb_ieee_addr_t coordinator_ieee;
 static bool coordinator_known;
 
 static uint64_t now_ms(void) { return (uint64_t)esp_timer_get_time() / 1000; }
-static bool active(unsigned i) { return ((gpio_get_level(pins[i]) == 0) ^ (cfg.channels[i].invert != 0)) || serial_input.buttons[i].down; }
+static bool physical(unsigned i) { return (gpio_get_level(pins[i]) == 0) ^ (cfg.channels[i].invert != 0); }
+static bool active(unsigned i) { return physical(i) || serial_input.buttons[i].down; }
 
 static void set_attr(uint8_t ep, uint16_t id, void *value) {
     esp_zb_zcl_status_t s = esp_zb_zcl_set_attribute_val(ep, CLUSTER, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE, id, value, false);
@@ -199,6 +203,7 @@ static bool config_value(channel_config_t *c, uint16_t id, const uint8_t *v) {
     return channel_valid(c);
 }
 static int check_value(uint16_t id, uint8_t ep, uint8_t *v) {
+    if(reset_pending)return ESP_ZB_ZCL_STATUS_FAIL;
     if (!v || ep<1 || ep>CHANNELS) return ESP_ZB_ZCL_STATUS_INVALID_VALUE;
     if (id==ATTR_BINDING_PRIORITY) return *v<=1 ? ESP_ZB_ZCL_STATUS_SUCCESS : ESP_ZB_ZCL_STATUS_INVALID_VALUE;
     channel_config_t candidate=cfg.channels[ep-1];
@@ -245,6 +250,30 @@ static void dispatch(unsigned i,const command_t *c) {
     ESP_LOGI(TAG,"CH%u cluster=0x%04x command=0x%02x direct: %s",i+1,c->cluster,c->id,esp_err_to_name(err));
 }
 
+static esp_err_t save_config(void) {
+    if(!dirty)return ESP_OK;
+    esp_err_t err=nvs_set_blob(nv,"config2",&cfg,sizeof(cfg));
+    uint8_t priorities=0;
+    for(unsigned i=0;i<CHANNELS;++i)priorities|=(binding_priority[i]!=0)<<i;
+    if(err==ESP_OK)err=nvs_set_u8(nv,"bind_priority",priorities);
+    if(err==ESP_OK)err=nvs_commit(nv);
+    if(err==ESP_OK) {dirty=false;ESP_LOGI(TAG,"Configuration saved to NVS");}
+    return err;
+}
+static bool request_network_reset(void *unused) {
+    (void)unused;
+    if(save_config()!=ESP_OK)return false;
+    // Stop direct holds while old bindings/network still exist, then release UART states.
+    for(unsigned i=0;i<CHANNELS;++i) {
+        command_t command;
+        if(button_cancel(&inputs[i],&command))dispatch(i,&command);
+        serial_input_cancel(&serial_input,i);
+        button_init(&inputs[i],active(i),now_ms());
+    }
+    reset_pending=true;reset_requested_at=now_ms();
+    return true;
+}
+
 // Runs on the Zigbee scheduler: all app state and stack calls share one context.
 static void tick(uint8_t unused) {
     (void)unused;
@@ -252,24 +281,32 @@ static void tick(uint8_t unused) {
     refresh_bindings(now);
     update_route();
     serial_input_tick(&serial_input,now);
-    serial_transport_poll(&serial_input,cfg.channels,binding_priority,joined && bindings_known,now);
+    serial_runtime_t runtime={.firmware_version=esp_app_get_description()->version,
+        .boot_id=serial_boot_id,.joined=joined,.bindings_known=bindings_known,
+        .factory_new=esp_zb_bdb_is_factory_new(),.reset_pending=reset_pending,
+        .short_address=joined?esp_zb_get_short_address():0xffff};
+    for(unsigned i=0;i<CHANNELS;++i) {
+        if(physical(i))runtime.physical_mask|=1U<<i;
+        runtime.binding_clusters[i]=binding_clusters[i];runtime.control_path[i]=channel_route[i];
+    }
+    serial_transport_poll(&serial_input,cfg.channels,binding_priority,&runtime,now,request_network_reset,NULL);
+    if(serial_reset_ready(reset_pending,reset_requested_at,serial_transport_reset_acknowledged(),now)) {
+        ESP_LOGW(TAG,"UART RESET: clearing Zigbee network/bindings; channel settings retained");
+        esp_zb_factory_reset(); // Erases only zb_storage, then reboots into network steering.
+        return;
+    }
     for (unsigned i = 0; i < CHANNELS; ++i) {
         command_t command;
         if (rebase[i]) {
             if(button_cancel(&inputs[i],&command))dispatch(i,&command);
             button_init(&inputs[i],active(i),now);rebase[i]=false;
         }
-        if (!bindings_known) continue;
+        if (!bindings_known || reset_pending) continue;
         if(button_poll(&inputs[i],active(i),&cfg.channels[i],now,&command))dispatch(i,&command);
     }
     if (dirty && now - dirty_at >= 1000) {
-        esp_err_t err = nvs_set_blob(nv, "config2", &cfg, sizeof(cfg));
-        uint8_t priorities=0;
-        for(unsigned i=0;i<CHANNELS;++i)priorities |= (binding_priority[i]!=0)<<i;
-        if (err == ESP_OK) err = nvs_set_u8(nv, "bind_priority", priorities);
-        if (err == ESP_OK) err = nvs_commit(nv);
-        if (err == ESP_OK) { dirty = false; ESP_LOGI(TAG, "Configuration saved to NVS"); }
-        else { ESP_LOGE(TAG, "Configuration persistence failed: %s", esp_err_to_name(err)); dirty_at = now; }
+        esp_err_t err=save_config();
+        if(err!=ESP_OK) {ESP_LOGE(TAG,"Configuration persistence failed: %s",esp_err_to_name(err));dirty_at=now;}
     }
     if (!gpio_get_level(GPIO_NUM_9)) {
         if (!boot_held) { boot_held = true; boot_pressed_at = now; }
@@ -397,6 +434,7 @@ static void zigbee_task(void *arg) {
 }
 
 void app_main(void) {
+    serial_transport_logging_init();
     esp_err_t err = nvs_flash_init();
     // Do not silently erase persisted network/configuration on NVS errors.
     ESP_ERROR_CHECK(err);
@@ -441,6 +479,7 @@ void app_main(void) {
         button_init(&inputs[i], active(i), now_ms());
         events[i] = (esp_random() & 0xffffff) << 8; // Avoid reusing event counters after a reboot.
     }
+    serial_boot_id=esp_random();
     serial_transport_start();
     esp_zb_platform_config_t platform = {
         .radio_config.radio_mode = ZB_RADIO_MODE_NATIVE,

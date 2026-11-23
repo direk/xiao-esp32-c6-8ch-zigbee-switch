@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: MIT
 #pragma once
-#include "serial_input.h"
+#include "serial_session.h"
 #define SERIAL_QUEUE_DEPTH 8
 #define SERIAL_COMMANDS_PER_TICK 1
+#define SERIAL_EVENT_DEPTH 32
 
-// Initialize queues/UART and start its dedicated, lower-priority FreeRTOS task.
+// Call first in app_main: install a nonblocking ESP_LOG router, default OFF.
+void serial_transport_logging_init(void);
 void serial_transport_start(void);
-// Called only by Zigbee scheduler. Queue operations have zero timeout; no UART I/O.
-void serial_transport_poll(serial_input_t *state, const channel_config_t *config, const uint8_t *binding_priority, bool ready, uint64_t now);
+// Zigbee context: zero-timeout queue operations only, no UART I/O.
+void serial_transport_poll(serial_input_t *state, const channel_config_t *config,
+    const uint8_t *priority, const serial_runtime_t *runtime, uint64_t now,
+    bool (*reset)(void *), void *reset_context);
+bool serial_transport_reset_acknowledged(void);
