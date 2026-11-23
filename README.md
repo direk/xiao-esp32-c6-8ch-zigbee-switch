@@ -4,11 +4,10 @@ Wersja **2.0.0** dla Seeed Studio XIAO ESP32-C6 ze stałym zasilaniem USB i
 zewnętrzną anteną U.FL. Urządzenie pracuje jako router Zigbee, bez usypiania
 i bez heartbeat. Każdy kanał ma własny endpoint, konfigurację i bindingi.
 
-[Kod źródłowy](https://github.com/direk/xiao-esp32-c6-4ch-zigbee-switch) — nazwa
-repozytorium pochodzi z pierwszej wersji czterokanałowej.
-[Wydanie 2.0.0 — firmware, konwerter i kompletna paczka](https://github.com/direk/xiao-esp32-c6-4ch-zigbee-switch/releases/tag/v2.0.0).
+[Kod źródłowy](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch).
+[Wydanie 2.0.0 — firmware, konwerter i kompletna paczka](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch/releases/tag/v2.0.0).
 Skrypt pakujący generuje również lokalne `dist/xiao-8ch-v2.0.0.zip`.
-[Wydanie 1.2.0 na GitHubie](https://github.com/direk/xiao-esp32-c6-4ch-zigbee-switch/releases/tag/v1.2.0)
+[Wydanie 1.2.0 na GitHubie](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch/releases/tag/v1.2.0)
 jest starszą wersją czterokanałową.
 
 ## Podłączenie
@@ -258,7 +257,7 @@ Jeżeli masz Git, kod możesz pobrać zamiast rozpakowywania ZIP-a:
 
 ```sh
 mkdir -p "$HOME/esp"
-git clone https://github.com/direk/xiao-esp32-c6-4ch-zigbee-switch.git "$HOME/esp/xiao-4ch"
+git clone https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch.git "$HOME/esp/xiao-8ch"
 ```
 
 ### A. Instalacja narzędzi — jednorazowo
@@ -307,7 +306,7 @@ Przejdź do katalogu `firmware` we własnej kopii projektu. Dla przykładowej
 lokalizacji `~/esp/xiao-4ch`:
 
 ```sh
-cd "$HOME/esp/xiao-4ch/firmware"
+cd "$HOME/esp/xiao-8ch/firmware"
 idf.py set-target esp32c6
 idf.py build
 ```
@@ -365,7 +364,7 @@ Node.js 24.10.0. Test C wymaga kompilatora `cc` i sanitizerów (na macOS zapewni
 je narzędzia programistyczne Apple).
 
 ```sh
-cd "$HOME/esp/xiao-4ch"
+cd "$HOME/esp/xiao-8ch"
 npm ci --ignore-scripts
 npm test
 npm run test:control
