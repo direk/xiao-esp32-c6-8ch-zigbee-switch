@@ -30,7 +30,7 @@ subprocess.run([
     "0x10000", str(build / "xiao_zigbee_8ch.bin"),
 ], check=True)
 shutil.copy2(build / "xiao_zigbee_8ch.bin", out / "application.bin")
-for directory in ["zigbee2mqtt", "docs", "tests", "scripts", "esphome"]:
+for directory in ["zigbee2mqtt", "docs", "tests", "scripts"]:
     shutil.copytree(root / directory, out / directory, dirs_exist_ok=True)
 shutil.copytree(root / "firmware", out / "firmware", dirs_exist_ok=True,
                 ignore=shutil.ignore_patterns("build", "managed_components", "sdkconfig", "sdkconfig.old"))

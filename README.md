@@ -69,14 +69,6 @@ Podłącz TX urządzenia do D7/RX, RX do D6/TX i wspólną masę.
 Prawdziwy RS-232 wymaga konwertera poziomów (np. MAX3232); nie podłączaj go
 bezpośrednio do GPIO. [Pełny opis protokołu i odpowiedzi](docs/UART.md).
 
-## ESPHome / KinCony KC868-A8S
-
-[Szablon i instrukcja ESPHome](esphome/README.md) zawierają pakiet UART oraz
-pełny przykład KC868-A8S oparty na konfiguracji użytkownika: wejścia 1–8
-przekazują PRESS/RELEASE do CH1–CH8 XIAO, z zachowaniem lokalnych przekaźników
-i zdarzeń HA. Dodano przyciski testowe, wybór komendy, INFO/STATUS/GET i logi.
-Piny i kierunki są ustawione przez substitutions; szczegóły połączenia w instrukcji.
-
 ## Ustawienia kanału
 
 - `input_mode`: `push` dla przycisku chwilowego, `rocker` dla przełącznika

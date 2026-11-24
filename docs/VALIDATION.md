@@ -118,17 +118,6 @@ Rzeczywiste wyjście #LOG przy zdarzeniu aplikacji, UART D6/D7 oraz RESET
 pozostają do testu sprzętowego; izolację portów i formatowanie logów sprawdzają
 opisane powyżej testy produkcyjnego kodu z atrapami sterowników.
 
-## Przykład ESPHome dla KC868-A8S
-
-Pakiet i pełny YAML zweryfikowano przez esphome config, generowanie kodu i
-pełną kompilację w ESPHome 2025.9.3 / ESP-IDF 5.4.2 dla esp32dev. Wynik SUCCESS:
-RAM 35 884 B (11,0%), aplikacja 1 017 102 B (55,4% partycji OTA).
-Konfiguracja używa GPIO15 TX / GPIO13 RX, zachowuje PCF8574 i lokalne akcje
-wejść/HA użytkownika. Budowanie odbyło się poza projektem z testowymi sekretami;
-żadne hasła użytkownika nie są zapisane w przykładach. Lokalny PlatformIO na
-macOS wymagał normalizacji aliasów ścieżek /tmp/private/tmp. Nie wgrano firmware'u
-na KinCony; komunikacja obu płytek po przewodach pozostaje do weryfikacji.
-
 ## Poprawka rocker/toggle 2.1.1
 
 Testy C sprawdzają oba stany styku przy starcie (bez wysyłania komendy),

@@ -9,9 +9,6 @@
 - Ta sama poprawka obowiązuje dla fizycznych wejść, UART i USB.
 - Testy obu pozycji startowych, debounce, obu zboczy, ośmiu niezależnych wejść
   i dekodowania produkcyjnych ramek Toggle przez zigbee-herdsman.
-- Pakiet ESPHome i pełny przykład KC868-A8S: osiem wejść → CH1–CH8 XIAO,
-  diagnostyka i przyciski testowe, z zachowaniem istniejących akcji HA/relay.
-  Konfiguracja używa secrets.yaml; pełna kompilacja ESPHome została sprawdzona.
 
 ## 2.1.0 — 23 listopada 2026
 
