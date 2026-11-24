@@ -30,7 +30,7 @@ subprocess.run([
     "0x10000", str(build / "xiao_zigbee_8ch.bin"),
 ], check=True)
 shutil.copy2(build / "xiao_zigbee_8ch.bin", out / "application.bin")
-for directory in ["zigbee2mqtt", "docs", "tests", "scripts"]:
+for directory in ["zigbee2mqtt", "docs", "tests", "scripts", "esphome"]:
     shutil.copytree(root / directory, out / directory, dirs_exist_ok=True)
 shutil.copytree(root / "firmware", out / "firmware", dirs_exist_ok=True,
                 ignore=shutil.ignore_patterns("build", "managed_components", "sdkconfig", "sdkconfig.old"))
@@ -51,7 +51,7 @@ manifest = {
     "version": firmware_version, "target": "esp32c6", "board": "Seeed Studio XIAO ESP32-C6",
     "esp_idf": "5.4.2", "esp_zigbee_lib": "1.6.9", "esp_zboss_lib": "1.6.9",
     "converter_tested_with": "zigbee-herdsman-converters 26.135.0",
-    "converter_revision": "2.0.0",
+    "converter_revision": "0.0.6",
     "hardware_tested": False,
     "hardware_boot_tested": args.hardware_boot_tested,
     "antenna": "external",

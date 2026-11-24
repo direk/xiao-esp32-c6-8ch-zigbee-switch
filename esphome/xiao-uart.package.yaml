@@ -1,0 +1,304 @@
+# ESPHome package for XIAO firmware >= 2.1.0.
+# Required substitutions: xiao_tx_pin, xiao_rx_pin (ESPHome host perspective).
+# Requests are untagged and never retried automatically; relay actions are not replayed.
+esphome:
+  on_boot:
+    priority: -100
+    then:
+      - delay: 3s
+      - script.execute:
+          id: xiao_send
+          command: "LOG 0"
+      - script.execute:
+          id: xiao_send
+          command: "INFO"
+      - script.execute:
+          id: xiao_send
+          command: "STATUS"
+
+logger:
+  baud_rate: 0
+
+api:
+  actions:
+    - action: xiao_uart_command
+      variables:
+        command: string
+      then:
+        - script.execute:
+            id: xiao_send
+            command: !lambda return command;
+
+json:
+
+globals:
+  - id: xiao_last_rx_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
+  - id: xiao_received
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+
+uart:
+  id: xiao_uart
+  tx_pin: ${xiao_tx_pin}
+  rx_pin: ${xiao_rx_pin}
+  baud_rate: 115200
+  data_bits: 8
+  parity: NONE
+  stop_bits: 1
+  rx_buffer_size: 4096
+  debug:
+    direction: RX
+    dummy_receiver: true
+    after:
+      bytes: 256
+      timeout: 20ms
+      delimiter: "\n"
+    sequence:
+      - lambda: |-
+          // UART debug can deliver partial lines; do not parse a chunk as a reply.
+          static std::string line;
+          static bool overflow = false;
+          for (uint8_t byte : bytes) {
+            if (byte == '\r') continue;
+            if (byte != '\n') {
+              if (line.size() < 2063) line.push_back(static_cast<char>(byte));
+              else overflow = true;
+              continue;
+            }
+            if (overflow) {
+              id(xiao_last_error).publish_state("RX line too long");
+            } else if (line.rfind("#LOG ", 0) == 0) {
+              ESP_LOGI("xiao_uart", "%s", line.c_str());
+            } else if (line.rfind("OK ", 0) == 0 || line.rfind("ERR ", 0) == 0 || (!line.empty() && line[0] == '{')) {
+              id(xiao_last_rx_ms) = millis();
+              id(xiao_received) = true;
+              id(xiao_last_reply).publish_state(line.substr(0, 250));
+              if (line.rfind("ERR ", 0) == 0) {
+                id(xiao_last_error).publish_state(line.substr(0, 250));
+                ESP_LOGW("xiao_uart", "%s", line.c_str());
+              }
+              if (line == "OK LOG 1") id(xiao_logs).publish_state(true);
+              if (line == "OK LOG 0") id(xiao_logs).publish_state(false);
+              if (!line.empty() && line[0] == '{') {
+                json::parse_json(line, [](JsonObject root) -> bool {
+                  if (root["firmware"].is<const char *>())
+                    id(xiao_firmware).publish_state(root["firmware"].as<std::string>());
+                  if (root["boot_id"].is<uint32_t>())
+                    id(xiao_boot_id).publish_state(std::to_string(root["boot_id"].as<uint32_t>()));
+                  if (root["logs_enabled"].is<bool>())
+                    id(xiao_logs).publish_state(root["logs_enabled"].as<bool>());
+                  if (root["zigbee"].is<JsonObject>())
+                    id(xiao_zigbee_joined).publish_state(root["zigbee"]["joined"].as<bool>());
+                  if (root["channel"].is<int>()) {
+                    std::string summary = "CH" + std::to_string(root["channel"].as<int>()) + ": ";
+                    summary += root["input_mode"].as<std::string>() + " / " + root["switch_type"].as<std::string>();
+                    summary += " / binding_priority=" + root["binding_priority"].as<std::string>();
+                    id(xiao_channel_config).publish_state(summary.substr(0, 250));
+                  }
+                  return true;
+                });
+              }
+            }
+            line.clear();
+            overflow = false;
+          }
+
+script:
+  - id: xiao_send
+    mode: queued
+    max_runs: 32
+    parameters:
+      command: string
+    then:
+      - uart.write:
+          id: xiao_uart
+          data: !lambda |-
+            // One command per call; LF is added here, not in the caller.
+            if (command.empty() || command.size() > 63 || command[0] == '@' || command.find_first_of("\r\n") != std::string::npos) {
+              id(xiao_last_error).publish_state("Invalid command: use one untagged line without LF");
+              return {};
+            }
+            id(xiao_last_command).publish_state(command);
+            std::string frame = command + "\n";
+            return std::vector<uint8_t>(frame.begin(), frame.end());
+      # Keep bursts below the XIAO scheduler's command rate; no blocking lambda/sleep.
+      - delay: 25ms
+
+interval:
+  - interval: 30s
+    then:
+      - if:
+          condition:
+            not:
+              script.is_running: xiao_send
+          then:
+            - script.execute:
+                id: xiao_send
+                command: "STATUS"
+
+binary_sensor:
+  - platform: template
+    id: xiao_link
+    name: "XIAO UART connection"
+    device_class: connectivity
+    entity_category: diagnostic
+    lambda: return id(xiao_received) && (uint32_t)(millis() - id(xiao_last_rx_ms)) < 65000;
+  - platform: template
+    id: xiao_zigbee_joined
+    name: "XIAO Zigbee joined"
+    device_class: connectivity
+    entity_category: diagnostic
+
+text_sensor:
+  - platform: template
+    id: xiao_last_command
+    name: "XIAO last command"
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    id: xiao_last_reply
+    name: "XIAO last reply"
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    id: xiao_last_error
+    name: "XIAO last error"
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    id: xiao_firmware
+    name: "XIAO firmware"
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    id: xiao_boot_id
+    name: "XIAO boot ID"
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    id: xiao_channel_config
+    name: "XIAO selected channel config"
+    entity_category: diagnostic
+    update_interval: never
+
+number:
+  - platform: template
+    id: xiao_selected_channel
+    name: "XIAO channel"
+    min_value: 1
+    max_value: 8
+    step: 1
+    optimistic: true
+    initial_value: 1
+    restore_value: true
+  - platform: template
+    id: xiao_hold_ms
+    name: "XIAO hold duration"
+    unit_of_measurement: ms
+    min_value: 600
+    max_value: 10000
+    step: 100
+    optimistic: true
+    initial_value: 1500
+    restore_value: true
+
+select:
+  - platform: template
+    id: xiao_gesture
+    name: "XIAO command"
+    optimistic: true
+    initial_option: CLICK
+    options: [CLICK, DOUBLE, TRIPLE, HOLD, PRESS, RELEASE, "SET ON", "SET OFF"]
+
+switch:
+  - platform: template
+    id: xiao_logs
+    name: "XIAO UART logs"
+    entity_category: config
+    optimistic: false
+    restore_mode: DISABLED
+    turn_on_action:
+      - script.execute:
+          id: xiao_send
+          command: "LOG 1"
+    turn_off_action:
+      - script.execute:
+          id: xiao_send
+          command: "LOG 0"
+
+button:
+  - platform: template
+    name: "XIAO send selected command"
+    on_press:
+      - script.execute:
+          id: xiao_send
+          command: !lambda |-
+            const std::string action = id(xiao_gesture).state;
+            std::string channel = std::to_string((int) id(xiao_selected_channel).state);
+            if (action == "SET ON") return "SET " + channel + " ON";
+            if (action == "SET OFF") return "SET " + channel + " OFF";
+            if (action == "HOLD") return "HOLD " + channel + " " + std::to_string((int) id(xiao_hold_ms).state);
+            return action + " " + channel;
+  - platform: template
+    name: "XIAO INFO"
+    entity_category: diagnostic
+    on_press:
+      - script.execute: {id: xiao_send, command: INFO}
+  - platform: template
+    name: "XIAO STATUS"
+    entity_category: diagnostic
+    on_press:
+      - script.execute: {id: xiao_send, command: STATUS}
+  - platform: template
+    name: "XIAO GET selected channel"
+    entity_category: diagnostic
+    on_press:
+      - script.execute:
+          id: xiao_send
+          command: !lambda return "GET " + std::to_string((int) id(xiao_selected_channel).state);
+  - platform: template
+    name: "XIAO release all"
+    on_press:
+      - script.execute: {id: xiao_send, command: "RELEASE ALL"}
+  - platform: template
+    name: "XIAO RESET Zigbee network"
+    entity_category: config
+    disabled_by_default: true
+    on_press:
+      - script.execute: {id: xiao_send, command: RESET}
+  - platform: template
+    name: "XIAO CH1 click"
+    on_press:
+      - script.execute: {id: xiao_send, command: "CLICK 1"}
+  - platform: template
+    name: "XIAO CH2 click"
+    on_press:
+      - script.execute: {id: xiao_send, command: "CLICK 2"}
+  - platform: template
+    name: "XIAO CH3 click"
+    on_press:
+      - script.execute: {id: xiao_send, command: "CLICK 3"}
+  - platform: template
+    name: "XIAO CH4 click"
+    on_press:
+      - script.execute: {id: xiao_send, command: "CLICK 4"}
+  - platform: template
+    name: "XIAO CH5 click"
+    on_press:
+      - script.execute: {id: xiao_send, command: "CLICK 5"}
+  - platform: template
+    name: "XIAO CH6 click"
+    on_press:
+      - script.execute: {id: xiao_send, command: "CLICK 6"}
+  - platform: template
+    name: "XIAO CH7 click"
+    on_press:
+      - script.execute: {id: xiao_send, command: "CLICK 7"}
+  - platform: template
+    name: "XIAO CH8 click"
+    on_press:
+      - script.execute: {id: xiao_send, command: "CLICK 8"}

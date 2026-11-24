@@ -34,7 +34,23 @@ int main(void) {
     assert(!poll(true,1000));assert(!poll(false,1010));assert(!poll(false,1045));
     setup(MODE_MOMENTARY);c.switch_action=ACT_ON;press(10);assert(poll(true,45)&&cmd.id==1);
     assert(!poll(false,100));assert(poll(false,135)&&cmd.id==0);
-    setup(MODE_TOGGLE);c.input_mode=INPUT_ROCKER;press(10);assert(poll(true,45)&&cmd.id==1);
+    // Both boot positions, all channels and switch_actions: each stable edge is Toggle.
+    for(unsigned boot=0;boot<2;++boot)
+    for(unsigned action=ACT_OFF;action<=ACT_TOGGLE;++action) {
+        setup(MODE_TOGGLE);c.input_mode=INPUT_ROCKER;c.switch_action=action;
+        button_init(&b,boot,0);assert(!poll(boot,500)); // No command on boot.
+        assert(!poll(!boot,510));assert(!poll(boot,520));assert(!poll(!boot,530));
+        assert(!poll(!boot,564));assert(poll(!boot,565));
+        assert(cmd.cluster==CL_ONOFF && cmd.id==2 && cmd.action==ACT_TOGGLE);
+        uint8_t frame[3];assert(command_frame(&cmd,77,frame,sizeof(frame))==3);
+        assert(frame[0]==0x11 && frame[1]==77 && frame[2]==0x02);
+        assert(command_direct(&cmd,true));assert(!command_reports(&cmd,true,true));
+        assert(command_reports(&cmd,true,false) && command_reports(&cmd,false,true));
+        assert(!poll(!boot,10000)); // Holding never repeats or overrides external changes.
+        assert(!poll(boot,10010));assert(!poll(boot,10044));assert(poll(boot,10045));
+        assert(cmd.cluster==CL_ONOFF && cmd.id==2 && cmd.action==ACT_TOGGLE);
+    }
+    setup(MODE_MOMENTARY);c.input_mode=INPUT_ROCKER;press(10);assert(poll(true,45)&&cmd.id==1);
     assert(!poll(false,100));assert(poll(false,135)&&cmd.id==0);
     setup(MODE_MULTIFUNCTION);click(10);assert(poll(false,545)&&cmd.action==ACT_SINGLE&&cmd.report_only);
     setup(MODE_MULTIFUNCTION);click(10);click(200);assert(poll(false,735)&&cmd.action==ACT_DOUBLE);
@@ -82,6 +98,21 @@ int main(void) {
     channel_defaults(&c);
     for(unsigned ep=0;ep<CHANNELS;++ep)assert(!button_poll(&independent[ep],ep==7,&c,10,&cmd));
     for(unsigned ep=0;ep<CHANNELS;++ep)assert(button_poll(&independent[ep],ep==7,&c,45,&cmd)==(ep==7));
+    c.input_mode=INPUT_ROCKER;
+    for(unsigned ep=0;ep<CHANNELS;++ep) {
+        bool boot=(ep%2)!=0;button_init(&independent[ep],boot,0);
+        assert(!button_poll(&independent[ep],boot,&c,500,&cmd));
+        assert(!button_poll(&independent[ep],!boot,&c,510,&cmd));
+    }
+    for(unsigned ep=0;ep<CHANNELS;++ep) {
+        bool boot=(ep%2)!=0;
+        assert(button_poll(&independent[ep],!boot,&c,550,&cmd));
+        assert(cmd.cluster==CL_ONOFF && cmd.id==2);
+        assert(!button_poll(&independent[ep],boot,&c,600,&cmd));
+    }
+    for(unsigned ep=0;ep<CHANNELS;++ep) {
+        assert(button_poll(&independent[ep],(ep%2)!=0,&c,640,&cmd));assert(cmd.id==2);
+    }
     // Full routing matrix: priority changes action reporting, never direct delivery.
     for(unsigned report=0;report<2;++report)
     for(unsigned bound=0;bound<2;++bound)

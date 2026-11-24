@@ -1,4 +1,4 @@
-# Komendy przez UART i USB-C — protokół v2, firmware 2.1.0
+# Komendy przez UART i USB-C — protokół v2, firmware 2.1.1
 
 Firmware obsługuje osiem wirtualnych przycisków. Korzystają z tych samych
 ustawień kanałów, logiki gestów, bindingów i `binding_priority` co fizyczne wejścia.
@@ -114,6 +114,10 @@ Kanał to liczba 1–8.
 `HOLD` przyjmuje czas 600–10000 ms. `CLICK`, `DOUBLE`, `TRIPLE`, `HOLD`
 wymagają `input_mode=push`; `SET` wymaga `rocker`. `PRESS`/`RELEASE` działają
 w obu trybach. `ON/OFF` w `SET` określa stan styku, nie komendę dla lampy.
+Od 2.1.1 w `rocker + toggle` każda zmiana tego styku wysyła Toggle:
+SET ON i późniejsze SET OFF przełączają lampę na przeciwny stan, a ponowne
+SET ON bez zmiany styku niczego nie przełącza. W `rocker + momentary`
+zamknięcie/otwarcie nadal daje ON/OFF. Dotyczy to fizycznego GPIO, UART i USB.
 
 Dla ręcznego `PRESS`/`RELEASE` pozostaw minimum 100 ms pomiędzy zmianami.
 Wysłanie obu w jednym pakiecie bez odstępu może zostać pominięte przez debounce.
@@ -129,7 +133,7 @@ kolejne operacje sterujące zwracają ERR RESET_PENDING aż do restartu.
 bez identyfikatora albo z nowym wyższym ID odnawia ten czas bez ponownego
 naciśnięcia. Ponowienie z tym samym ID zwraca zapamiętaną odpowiedź i **nie
 odnawia** limitu. Dla długotrwałego zamknięcia rocker
-odświeżaj `SET N ON`, np. co 5 sekund. Wygaszenie może wygenerować OFF/Stop/release,
+odświeżaj `SET N ON`, np. co 5 sekund. Wygaszenie może wygenerować Toggle/OFF/Stop/release,
 zależnie od trybu kanału. Wirtualne stany nie są zapisywane do NVS, po restarcie
 wszystkie są zwolnione.
 
@@ -181,7 +185,7 @@ ID potrzebne jest nowe uruchomienie; licznik nie zawija się do 1 w tej samej se
 `INFO` zwraca jedną linię JSON, np.:
 
 ```json
-{"firmware":"2.1.0","protocol":2,"model":"XIAO-C6-8CH","boot_id":123456,"channels":8,"baud":115200,"format":"8N1","port":"uart","transports":["uart","usb"],"logs_enabled":false,"request_ids":true,"id_order":"increasing","dedup_depth":16,"hold_timeout_ms":10000,"commands":["PING","INFO","STATUS","GET","PRESS","RELEASE","CLICK","DOUBLE","TRIPLE","HOLD","SET","RELEASE ALL","RESET","LOG"]}
+{"firmware":"2.1.1","protocol":2,"model":"XIAO-C6-8CH","boot_id":123456,"channels":8,"baud":115200,"format":"8N1","port":"uart","transports":["uart","usb"],"logs_enabled":false,"request_ids":true,"id_order":"increasing","dedup_depth":16,"hold_timeout_ms":10000,"commands":["PING","INFO","STATUS","GET","PRESS","RELEASE","CLICK","DOUBLE","TRIPLE","HOLD","SET","RELEASE ALL","RESET","LOG"]}
 ```
 
 `STATUS` zwraca JSON z następującymi polami:

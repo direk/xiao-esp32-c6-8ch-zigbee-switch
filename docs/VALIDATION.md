@@ -1,4 +1,4 @@
-# Walidacja wersji 2.1.0 — osiem kanałów
+# Walidacja wersji 2.1.1 — osiem kanałów
 
 ## Kompilacja i testy na komputerze
 
@@ -117,3 +117,31 @@ aplikacji są kierowane przez callback do osobnych kolejek portów.
 Rzeczywiste wyjście #LOG przy zdarzeniu aplikacji, UART D6/D7 oraz RESET
 pozostają do testu sprzętowego; izolację portów i formatowanie logów sprawdzają
 opisane powyżej testy produkcyjnego kodu z atrapami sterowników.
+
+## Przykład ESPHome dla KC868-A8S
+
+Pakiet i pełny YAML zweryfikowano przez esphome config, generowanie kodu i
+pełną kompilację w ESPHome 2025.9.3 / ESP-IDF 5.4.2 dla esp32dev. Wynik SUCCESS:
+RAM 35 884 B (11,0%), aplikacja 1 017 102 B (55,4% partycji OTA).
+Konfiguracja używa GPIO15 TX / GPIO13 RX, zachowuje PCF8574 i lokalne akcje
+wejść/HA użytkownika. Budowanie odbyło się poza projektem z testowymi sekretami;
+żadne hasła użytkownika nie są zapisane w przykładach. Lokalny PlatformIO na
+macOS wymagał normalizacji aliasów ścieżek /tmp/private/tmp. Nie wgrano firmware'u
+na KinCony; komunikacja obu płytek po przewodach pozostaje do weryfikacji.
+
+## Poprawka rocker/toggle 2.1.1
+
+Testy C sprawdzają oba stany styku przy starcie (bez wysyłania komendy),
+debounce i brak powtórek przy długim utrzymaniu pozycji, Toggle na obu zboczach,
+niezależność od switch_actions i ośmiu stanów wejść. Ramka genOnOff ma command
+ID 0x02 i pusty payload; zigbee-herdsman dekoduje cztery produkcyjne ramki
+z obu kierunków jako toggle. Sprawdzono również SET/PRESS/RELEASE dla CH2
+rocker/toggle oraz zachowanie starej semantyki ON/OFF w rocker/momentary.
+
+24 listopada 2026: aplikację 2.1.1 wgrano pod 0x10000 i sprawdzono osobnym
+verify_flash. INFO potwierdziło 2.1.1, a GET wszystkich ośmiu kanałów był
+identyczny przed/po aktualizacji. STATUS potwierdził przywróconą sieć i te same
+maski bindingów: CH1=2 (Level), CH2=1 (On/Off), pozostałe 0. CH2 zachował
+rocker/toggle oraz binding_priority=ON. Nie wysyłano komend sterujących lampami
+ani RESET; rzeczywiste przestawienie styku i zachowanie lampy wymagają próby
+użytkownika. Test regresyjny ramek potwierdza Toggle na obu zboczach.

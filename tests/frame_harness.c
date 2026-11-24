@@ -28,4 +28,11 @@ int main(void){
             }
         }
     }
+    for(unsigned boot=0;boot<2;++boot) {
+        channel_config_t c;channel_defaults(&c);c.input_mode=INPUT_ROCKER;
+        button_t b;button_init(&b,boot,0);
+        sample(&b,&c,0,!boot,10,"rocker_edge");sample(&b,&c,0,!boot,45,"rocker_edge");
+        sample(&b,&c,0,boot,100,"rocker_edge");sample(&b,&c,0,boot,135,"rocker_edge");
+    }
+
 }

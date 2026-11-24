@@ -1,12 +1,12 @@
 # XIAO ESP32-C6 — osiem kanałów Zigbee
 
-Wersja **2.1.0** dla Seeed Studio XIAO ESP32-C6 ze stałym zasilaniem USB i
+Wersja **2.1.1** dla Seeed Studio XIAO ESP32-C6 ze stałym zasilaniem USB i
 zewnętrzną anteną U.FL. Urządzenie pracuje jako router Zigbee, bez usypiania
 i bez heartbeat. Każdy kanał ma własny endpoint, konfigurację i bindingi.
 
 [Kod źródłowy](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch).
-[Wydanie 2.1.0 — firmware, konwerter i kompletna paczka](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch/releases/tag/v2.1.0).
-Skrypt pakujący generuje również lokalne `dist/xiao-8ch-v2.1.0.zip`.
+[Wydanie 2.1.1 — firmware, konwerter i kompletna paczka](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch/releases/tag/v2.1.1).
+Skrypt pakujący generuje również lokalne `dist/xiao-8ch-v2.1.1.zip`.
 [Wydanie 1.2.0 na GitHubie](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch/releases/tag/v1.2.0)
 jest starszą wersją czterokanałową.
 
@@ -62,18 +62,28 @@ włączyć Permit join. Zwykłe komendy UART z 2.0.0 nadal działają bez zmian.
 komendę. Domyślnie oba porty mają logi wyłączone; po restarcie znów są wyłączone.
 Logi mają prefiks `#LOG `, a INFO/STATUS pokazują port i `logs_enabled`.
 Konwerter Z2M z wydania 2.0.0 pozostaje zgodny; klaster ustawień nie zmienił się.
-Wersję 2.1.0 wgrano na XIAO i sprawdzono komendy przez USB.
+Poprawkę 2.1.1 wgrano na XIAO; ustawienia i bindingi pozostały zachowane.
 [Historia zmian](CHANGELOG.md) · [Zakres wykonanych testów](docs/VALIDATION.md).
 
 Podłącz TX urządzenia do D7/RX, RX do D6/TX i wspólną masę.
 Prawdziwy RS-232 wymaga konwertera poziomów (np. MAX3232); nie podłączaj go
 bezpośrednio do GPIO. [Pełny opis protokołu i odpowiedzi](docs/UART.md).
 
+## ESPHome / KinCony KC868-A8S
+
+[Szablon i instrukcja ESPHome](esphome/README.md) zawierają pakiet UART oraz
+pełny przykład KC868-A8S oparty na konfiguracji użytkownika: wejścia 1–8
+przekazują PRESS/RELEASE do CH1–CH8 XIAO, z zachowaniem lokalnych przekaźników
+i zdarzeń HA. Dodano przyciski testowe, wybór komendy, INFO/STATUS/GET i logi.
+Piny i kierunki są ustawione przez substitutions; szczegóły połączenia w instrukcji.
+
 ## Ustawienia kanału
 
 - `input_mode`: `push` dla przycisku chwilowego, `rocker` dla przełącznika
-  dwupozycyjnego. Rocker obsługuje funkcje `toggle` i `momentary`; zamknięcie
-  styku daje ON, otwarcie OFF. Pozostałe funkcje wymagają `push`.
+  dwupozycyjnego. `rocker + toggle` wysyła Toggle przy każdej zmianie styku
+  (zwarcie i rozwarcie), niezależnie od stanu lampy ustawionego przez inne
+  automatyzacje. `rocker + momentary` daje ON przy zwarciu i OFF przy rozwarciu.
+  Pozostałe funkcje wymagają `push`.
 - `invert`: odwraca aktywny poziom wejścia.
 - `binding_priority`: `ON` (domyślnie) pomija `action`, gdy polecenie idzie
   przez binding. `OFF` zachowuje sterowanie przez binding i dodatkowo wysyła
@@ -194,7 +204,7 @@ zgaszone, obie zapalone i zwolnienie przycisku podczas regulacji.
 
 ## Konwerter Z2M i aktualizacja z wersji czterokanałowej
 
-1. Wgraj samą aplikację 2.1.0 pod 0x10000, **bez erase_flash**. Układ partycji
+1. Wgraj samą aplikację 2.1.1 pod 0x10000, **bez erase_flash**. Układ partycji
    pozostaje bez zmian. Firmware migruje ustawienia input_mode/invert CH1–CH4,
    zachowuje sieć i bindingi. CH5–CH8 startują jako push/toggle.
 2. Zastąp poprzedni konwerter plikiem `zigbee2mqtt/xiao-c6-8ch.mjs`.
@@ -219,7 +229,7 @@ i `throttle: 0`. W Z2M wymagającym włączenia zewnętrznych konwerterów ustaw
 
 ## Wgranie obrazów
 
-Rozpakuj `dist/xiao-8ch-v2.1.0.zip`. W katalogu rozpakowanej paczki:
+Rozpakuj `dist/xiao-8ch-v2.1.1.zip`. W katalogu rozpakowanej paczki:
 
 ```sh
 python3 -m venv .venv
@@ -405,7 +415,7 @@ python ../scripts/package_release.py --idf-path "$IDF_PATH"
 ```
 
 Skrypt używa programu esptool zainstalowanego razem z ESP-IDF; nie wymaga
-ręcznego kopiowania obrazów. Utworzy `dist/xiao-8ch-v2.1.0.zip` w głównym
+ręcznego kopiowania obrazów. Utworzy `dist/xiao-8ch-v2.1.1.zip` w głównym
 katalogu projektu i usunie swoje pliki tymczasowe. ZIP zawiera obrazy do wgrania,
 źródła, konwerter, dokumentację, licencje i sumy kontrolne.
 

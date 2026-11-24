@@ -88,7 +88,11 @@ bool button_poll(button_t *s, bool active, const channel_config_t *c, uint64_t n
     bool edge=s->stable!=s->raw && now-s->changed_ms>=DEBOUNCE_MS;
     if (edge) {
         s->stable=s->raw;
-        if (c->input_mode==INPUT_ROCKER) { onoff(o,s->stable ? ACT_ON : ACT_OFF); return true; }
+        if (c->input_mode==INPUT_ROCKER) {
+            // Toggle must follow edges, not the contact position or a cached lamp state.
+            onoff(o,c->function==MODE_TOGGLE ? ACT_TOGGLE : (s->stable ? ACT_ON : ACT_OFF));
+            return true;
+        }
         if (s->stable) {
             s->pressed_ms=now; s->armed=true;
             if (c->function<=MODE_MOMENTARY) { onoff(o,c->switch_action); return true; }

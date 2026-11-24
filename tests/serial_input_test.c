@@ -77,7 +77,14 @@ int main(void) {
     advance(500);assert(events[2][ACT_LEVEL_STOP]==1);
     send("CLICK 3\n","OK CLICK 3\n");advance(700);assert(!events[2][ACT_ON]&&!events[2][ACT_TOGGLE]);
     send("DOUBLE 3\n","OK DOUBLE 3\n");advance(1000);assert(events[2][ACT_LEVEL_STEP_UP]==1);
-    reset();cfg[0].input_mode=INPUT_ROCKER;
+    reset();cfg[1].input_mode=INPUT_ROCKER; // User's CH2 rocker/toggle, same planner for UART/USB.
+    send("SET 2 ON\n","OK SET 2\n");advance(100);assert(events[1][ACT_TOGGLE]==1);
+    send("SET 2 ON\n","OK SET 2\n");advance(100);assert(events[1][ACT_TOGGLE]==1);
+    send("SET 2 OFF\n","OK SET 2\n");advance(100);assert(events[1][ACT_TOGGLE]==2);
+    send("PRESS 2\n","OK PRESS 2\n");advance(100);assert(events[1][ACT_TOGGLE]==3);
+    send("RELEASE 2\n","OK RELEASE 2\n");advance(100);assert(events[1][ACT_TOGGLE]==4);
+    assert(!events[1][ACT_ON] && !events[1][ACT_OFF]);
+    reset();cfg[0].input_mode=INPUT_ROCKER;cfg[0].function=MODE_MOMENTARY;
     send("CLICK 1\n","ERR MODE\n");send("SET 1 ON\n","OK SET 1\n");advance(100);
     assert(events[0][ACT_ON]==1);send("SET 1 ON\n","OK SET 1\n");advance(100);assert(events[0][ACT_ON]==1);
     send("SET 1 OFF\n","OK SET 1\n");advance(100);assert(events[0][ACT_OFF]==1);
@@ -95,7 +102,7 @@ int main(void) {
     assert(events[0][ACT_ON]==1 && events[0][ACT_OFF]==1);
     reset();cfg[0].function=MODE_SCENE;
     send("CLICK 1\n","OK CLICK 1\n");advance(700);assert(events[0][ACT_SCENE]==1);
-    reset();cfg[0].input_mode=INPUT_ROCKER;
+    reset();cfg[0].input_mode=INPUT_ROCKER;cfg[0].function=MODE_MOMENTARY;
     send("SET 1 ON\n","OK SET 1\n");advance(6000);
     send("SET 1 ON\n","OK SET 1\n");advance(6000);
     assert(serial.buttons[0].down && events[0][ACT_ON]==1 && !events[0][ACT_OFF]);

@@ -215,11 +215,15 @@ test('production C gesture frames decode as standard Level/Color/Scene commands 
         const lines = execFileSync(exe,{encoding:'utf8'}).trim().split('\n');
         assert.ok(lines.length > 30);
         const safeKinds = new Set();
-        let colors=0, scenes=0;
+        let colors=0, scenes=0, rockerEdges=0;
         for (const line of lines) {
             const [modeText,phase,clusterText,hex] = line.split(' ');
             const mode=Number(modeText),cluster=Number(clusterText),bytes=Buffer.from(hex,'hex');
             const parsed=Zcl.Frame.fromBuffer(cluster,Zcl.Header.fromBuffer(bytes),bytes,{});
+            if (phase==='rocker_edge') {
+                ++rockerEdges;assert.equal(cluster,6);assert.equal(parsed.command.ID,2);
+                assert.equal(parsed.command.name,'toggle');assert.deepEqual(parsed.payload,{});
+            }
             if (mode>=10) {
                 assert.equal(cluster,8); assert.ok([0,2,3].includes(parsed.command.ID));
                 assert.equal(parsed.payload.optionsMask,1); assert.equal(parsed.payload.optionsOverride,0);
@@ -234,7 +238,7 @@ test('production C gesture frames decode as standard Level/Color/Scene commands 
             }
             if(cluster===5) {++scenes;assert.equal(parsed.command.ID,5);assert.equal(parsed.payload.groupid,123);assert.equal(parsed.payload.sceneid,8);}
         }
-        assert.deepEqual([...safeKinds].sort(),[0,2,3]);assert.ok(colors>0 && scenes>0);
+        assert.deepEqual([...safeKinds].sort(),[0,2,3]);assert.ok(colors>0 && scenes>0);assert.equal(rockerEdges,4);
     } finally {rmSync(dir,{recursive:true,force:true});}
 });
 

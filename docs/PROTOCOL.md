@@ -1,4 +1,4 @@
-# XIAO-C6-8CH protocol 2.1.0
+# XIAO-C6-8CH protocol 2.1.1
 
 Eight endpoints (1–8), profile 0x0104, manufacturer DIY-XIAO, model XIAO-C6-8CH.
 Every endpoint advertises outgoing On/Off (0x0006), Level Control (0x0008),
@@ -86,7 +86,11 @@ must be refreshed through interview after the 4-to-8 endpoint upgrade.
 Changing bindingPriority applies to the next command without interrupting a hold.
 Changing other configuration cancels a held operation and rebases the input, preventing
 synthetic presses. A held input at boot does not trigger an automatic hold action.
-Rocker is valid only for toggle/momentary and uses closed=ON, open=OFF. Advanced
+Rocker is valid only for toggle/momentary. With function=toggle, each stable
+edge sends genOnOff Toggle (0x02), irrespective of contact position or lamp state.
+With function=momentary, closed sends ON and open sends OFF. switch_actions
+applies only to push. No command is sent just because the device boots with a
+closed/open contact. Advanced
 functions require push. Min/max pairs and other ranges are validated before writes.
 Configuration is committed after one second without another write.
 

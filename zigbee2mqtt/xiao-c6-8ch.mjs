@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Firmware/converter 2.0.0. Replace the previous converter; do not load both files.
+// Compatible with firmware 2.x. Replace the previous converter; do not load both files.
 import {presets as e, access as ea} from 'zigbee-herdsman-converters/lib/exposes';
 import {deviceAddCustomCluster} from 'zigbee-herdsman-converters/lib/modernExtend';
 
@@ -91,9 +91,9 @@ const received = {
     },
 };
 const descriptions = {
-    input_mode: 'Physical input. rocker supports toggle/momentary only; select push before advanced modes.',
+    input_mode: 'Physical input. rocker+toggle sends Toggle on both edges; rocker+momentary follows closed=ON/open=OFF. Advanced modes require push.',
     switch_type: 'Per-channel logical function. Brightness-only modes never send On/Off.',
-    switch_actions: 'Command on push in toggle/momentary mode. Rocker uses closed=ON/open=OFF.',
+    switch_actions: 'Push only: command on press in toggle/momentary mode. Rocker uses switch_type: toggle on both edges, momentary follows contact.',
     transition_time: 'Transition duration in 0.1 seconds; default 25 = 2.5 seconds.',
     binding_priority: 'Default ON: direct binding suppresses action. OFF: direct control also sends action. Saved on device.',
     group_id: 'Direct Zigbee scene group; 0 uses Scenes bindings instead.',
@@ -102,7 +102,7 @@ export default {
     zigbeeModel: ['XIAO-C6-8CH', 'XIAO-C6-4CH-FAIL1'],
     model: 'XIAO-C6-8CH', vendor: 'DIY-XIAO',
     description: 'Eight-channel mains-powered Zigbee switch/dimmer/scene controller, external antenna',
-    version: '0.0.5',
+    version: '0.0.6',
     extend: [customCluster, {isModernExtend: true, configure: [async (device) => {
         for (const ep of device.endpoints.filter((x) => x.ID >= 1 && x.ID <= 8)) {
             // Read in small batches so configuration fits a normal APS response.
