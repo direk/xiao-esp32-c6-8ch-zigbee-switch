@@ -12,6 +12,8 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "control.h"
+#include "binding_table.h"
+#include "zboss_api.h"
 #include "serial_input.h"
 #include "serial_transport.h"
 
@@ -59,8 +61,8 @@ static uint8_t bound_mask, cluster_masks[4], pending_masks[4], binding_clusters[
 static uint8_t aps_sequence;
 static bool bindings_known, scan_active;
 static binding_scan_t binding_scan;
-static esp_zb_zdo_mgmt_bind_param_t binding_request;
-static uintptr_t scan_generation;
+static uint8_t binding_tsn;
+static bool binding_page_pending;
 static uint64_t scan_started_ms, next_scan_ms;
 static esp_zb_ieee_addr_t coordinator_ieee;
 static bool coordinator_known;
@@ -119,60 +121,74 @@ static void update_route(void) {
     }
 }
 
-static void binding_table_received(const esp_zb_zdo_binding_table_info_t *table, void *context) {
-    if (!scan_active || (uintptr_t)context != scan_generation) return;
-    if (!table || table->status != ESP_ZB_ZDP_STATUS_SUCCESS) {
-        scan_active = false; // Retain last complete snapshot on failure.
-        ESP_LOGW(TAG, "Local binding table query failed");
+// esp-zigbee-lib 1.6.9 advances by 21 bytes even for 14-byte group records.
+// Use the pinned ZBOSS raw-response API and decode the wire format ourselves.
+static void binding_table_received(zb_uint8_t buffer) {
+    if (buffer == ZB_BUF_INVALID) return;
+    const uint8_t *data = zb_buf_begin(buffer);
+    size_t length = zb_buf_len(buffer);
+    if (!scan_active || !binding_page_pending || !length || data[0] != binding_tsn) {
+        zb_buf_free(buffer);
         return;
     }
+    binding_page_pending = false;
     esp_zb_ieee_addr_t own;
     esp_zb_get_long_address(own);
-    uint8_t mask = 0;
-    const esp_zb_zdo_binding_table_record_t *record = table->record;
-    for (unsigned n = 0; n < table->count; ++n) {
-        if (!record) { scan_active = false; return; }
-        bool excluded = record->dst_addr_mode == 3 &&
-            (!memcmp(record->dst_address.addr_long, own, sizeof(own)) ||
-             (coordinator_known && !memcmp(record->dst_address.addr_long, coordinator_ieee, sizeof(own))));
-        bool local=!memcmp(record->src_address,own,sizeof(own));
-        mask=binding_mask_add(mask,record->src_endp,record->cluster_id,record->dst_addr_mode,local,excluded);
-        int ci=binding_cluster_index(record->cluster_id);
-        if (ci>=0) pending_masks[ci]=binding_mask_add(pending_masks[ci],record->src_endp,record->cluster_id,record->dst_addr_mode,local,excluded);
-        record = record->next;
+    binding_page_t page;
+    bool valid = binding_page_decode(data, length, own, coordinator_known ? coordinator_ieee : NULL, &page);
+    zb_buf_free(buffer); // No pointers into the stack buffer survive this callback.
+    if (!valid) {
+        scan_active = false; // Retain the last complete snapshot.
+        ESP_LOGW(TAG, "Invalid or unsuccessful binding table response");
+        return;
     }
-    int state = binding_scan_page(&binding_scan, table->index, table->total, table->count, mask);
+    int state = binding_scan_page(&binding_scan, page.index, page.total, page.count, page.mask);
     if (state < 0) {
         scan_active = false;
         ESP_LOGW(TAG, "Inconsistent binding table snapshot; retrying");
-    } else if (state == 0) {
-        binding_request.start_index = binding_scan.next;
-        esp_zb_zdo_binding_table_req(&binding_request, binding_table_received, (void *)scan_generation);
-    } else {
+        return;
+    }
+    for (unsigned i=0; i<4; ++i) pending_masks[i] |= page.clusters[i];
+    ESP_LOGI(TAG, "Binding page index=%u total=%u count=%u mask=%02x", page.index,page.total,page.count,page.mask);
+    if (state > 0) {
         bound_mask = binding_scan.mask;
-        memcpy(cluster_masks,pending_masks,sizeof(cluster_masks));
+        memcpy(cluster_masks, pending_masks, sizeof(cluster_masks));
         bindings_known = true;
         scan_active = false;
         update_route();
     }
+    // The next page is requested by tick(), after the callback has returned.
 }
 
 static void refresh_bindings(uint64_t now) {
     if (!joined) return;
     if (scan_active && now - scan_started_ms >= 6000) {
-        scan_active = false;
-        ++scan_generation; // Late callbacks cannot replace a newer snapshot.
+        scan_active = binding_page_pending = false;
+        ESP_LOGW(TAG, "Binding table scan timed out; retaining previous snapshot");
     }
-    if (scan_active || now < next_scan_ms) return;
-    if (esp_zb_ieee_address_by_short(0, coordinator_ieee) == ESP_OK) coordinator_known = true;
-    binding_scan = (binding_scan_t){0};
-    memset(pending_masks,0,sizeof(pending_masks));
-    binding_request = (esp_zb_zdo_mgmt_bind_param_t){.dst_addr = esp_zb_get_short_address(), .start_index = 0};
-    scan_active = true;
-    scan_started_ms = now;
-    next_scan_ms = now + 1000;
-    ++scan_generation;
-    esp_zb_zdo_binding_table_req(&binding_request, binding_table_received, (void *)scan_generation);
+    if (!scan_active) {
+        if (now < next_scan_ms) return;
+        if (esp_zb_ieee_address_by_short(0, coordinator_ieee) == ESP_OK) coordinator_known = true;
+        binding_scan = (binding_scan_t){0};
+        memset(pending_masks, 0, sizeof(pending_masks));
+        scan_active = true;
+        binding_page_pending = false;
+        scan_started_ms = now;
+        next_scan_ms = now + 1000;
+    }
+    if (binding_page_pending) return;
+    zb_uint8_t buffer = zb_buf_get_out();
+    if (buffer == ZB_BUF_INVALID) {
+        scan_active = false;
+        return;
+    }
+    zb_zdo_mgmt_bind_param_t *request = ZB_BUF_GET_PARAM(buffer, zb_zdo_mgmt_bind_param_t);
+    request->dst_addr = esp_zb_get_short_address();
+    request->start_index = binding_scan.next;
+    binding_page_pending = true;
+    // The request transfers buffer ownership to ZBOSS, just as the SDK wrapper does.
+    binding_tsn = zb_zdo_mgmt_bind_req(buffer, binding_table_received);
+    if (binding_tsn == 0xff) scan_active = binding_page_pending = false;
 }
 
 static bool aps_indication(esp_zb_apsde_data_ind_t ind) {
@@ -359,7 +375,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *s) {
         bindings_known = scan_active = coordinator_known = false;
         bound_mask = 0;
         memset(cluster_masks,0,sizeof(cluster_masks));
-        ++scan_generation;
+        binding_page_pending = false;
         next_scan_ms = 0;
         esp_zb_scheduler_alarm(commission, ESP_ZB_BDB_MODE_NETWORK_STEERING, 3000);
         break;

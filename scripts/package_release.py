@@ -74,6 +74,7 @@ manifest = {
     "hardware_boot_tested": all(v in args.hardware_boot_tested for v in VARIANTS),
     "antenna_variants": list(VARIANTS),
     "routing": "per_cluster_binding_otherwise_action",
+    "binding_table_decoder": "raw_zboss_variable_records",
     "binding_priority": {"per_channel": True, "default": "ON", "persistent": True,
                          "off_behavior": "direct_control_and_action"},
     "channels": 8,

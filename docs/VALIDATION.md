@@ -148,3 +148,28 @@ użytkownika. Test regresyjny ramek potwierdza Toggle na obu zboczach.
 - Pakowanie ponownie uruchamia obie kompilacje; GitHub Actions używa tego
   samego skryptu. Brak poprawnej kompilacji wariantu przerywa proces.
 - Nie wgrywano wersji 2.1.2 na XIAO i nie testowano obu anten radiowo.
+
+## Bindingi grupowe i kolejne endpointy 2.1.3 — 26 listopada 2026
+
+Na podłączonym XIAO z anteną wewnętrzną odtworzono błąd: tablica miała dwa
+wpisy, ale firmware 2.1.2 rozpoznawał tylko CH1. Log pokazał poprawny pierwszy
+rekord grupowy i losowe pola kolejnego rekordu. Analiza kodu maszynowego
+przypiętej biblioteki 1.6.9 potwierdziła stały krok 21 bajtów, także dla
+14-bajtowych rekordów grupowych.
+
+- Nowy dekoder otrzymuje surową odpowiedź Mgmt_Bind_rsp przez API ZBOSS,
+  rozróżnia rekordy 14/21 bajtów i odrzuca uszkodzone lub niepełne strony.
+- Testy z ASan/UBSan: grupa/grupa, grupa/IEEE, IEEE/grupa i IEEE/IEEE;
+  oba porządki ośmiu endpointów, cztery klastry, strony, obce źródła,
+  wykluczenie koordynatora, maksymalna tablica, każde ucięcie odpowiedzi
+  oraz 10 000 losowych buforów. Wynik PASS; testy logiki wejść także PASS.
+- Skompilowano oba warianty anteny w ESP-IDF 5.4.2 / Zigbee SDK 1.6.9.
+- Przed diagnostyką zachowano lokalną kopię całej pamięci i ośmiu konfiguracji.
+  Na urządzeniu zapisano wyłącznie aplikację internal pod 0x10000.
+- verify_flash potwierdziło zgodność obrazu 2.1.3. Pięć kolejnych STATUS
+  pokazało joined=true, bindings_known=true i maski [1,1,0,0,0,0,0,0].
+  Wszystkie osiem odpowiedzi GET było identyczne przed/po aktualizacji.
+- Użytkownik potwierdził fizycznym testem, że CH1 i CH2 sterują swoimi lampami.
+  Nie kasowano ani nie tworzono ponownie bindingów; logi na USB pozostały OFF.
+- Test sprzętowy dotyczy wariantu internal i dwóch kanałów. External oraz
+  pozostałe kombinacje zweryfikowano kompilacją i testami dekodera.

@@ -13,6 +13,11 @@ jobs:
     container: espressif/idf:v5.4.2
     steps:
       - uses: actions/checkout@v4
+      - name: Test binding table decoder
+        shell: bash
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -I firmware/main firmware/main/control.c firmware/main/binding_table.c tests/binding_table_test.c -o /tmp/xiao-binding-test
+          /tmp/xiao-binding-test
       - name: Build and package external and internal antenna firmware
         shell: bash
         run: |

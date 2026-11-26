@@ -1,4 +1,4 @@
-idf_component_register(SRCS "main.c" "control.c" "serial_input.c" "serial_transport.c" "serial_session.c" INCLUDE_DIRS "." REQUIRES esp_driver_usb_serial_jtag esp_app_format esp_driver_uart esp_driver_gpio esp_timer nvs_flash)
+idf_component_register(SRCS "main.c" "binding_table.c" "control.c" "serial_input.c" "serial_transport.c" "serial_session.c" INCLUDE_DIRS "." REQUIRES esp_driver_usb_serial_jtag esp_app_format esp_driver_uart esp_driver_gpio esp_timer nvs_flash)
 
 set(XIAO_ANTENNA "" CACHE STRING "XIAO antenna: external or internal")
 set_property(CACHE XIAO_ANTENNA PROPERTY STRINGS external internal)

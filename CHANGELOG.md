@@ -1,5 +1,17 @@
 # Historia zmian
 
+## 2.1.3 — 26 listopada 2026
+
+- Naprawa odczytu tablicy bindingów zawierającej wpisy grupowe. Grupa zajmuje
+  14 bajtów, a wpis IEEE 21; dekoder SDK 1.6.9 błędnie używał stałego kroku 21.
+  W rezultacie kolejne endpointy mogły być oznaczane jako niezwiązane.
+- Odczyt surowej odpowiedzi przez przypięte API ZBOSS i własny dekoder z
+  kontrolą długości, trybu adresowania, źródła i spójności stron.
+- Następna strona jest odczytywana po powrocie callbacku; niepełna lub błędna
+  tablica nie zastępuje ostatniego poprawnego obrazu bindingów.
+- Testy obu kolejności grup/urządzeń, ośmiu kanałów, paginacji i uciętych ramek.
+- Poprawka nie wymaga kasowania sieci, ustawień ani istniejących bindingów.
+
 ## 2.1.2 — 26 listopada 2026
 
 - Standardowy skrypt budowania i pakowanie zawsze kompilują warianty external
