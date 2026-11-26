@@ -173,3 +173,30 @@ przypiętej biblioteki 1.6.9 potwierdziła stały krok 21 bajtów, także dla
   Nie kasowano ani nie tworzono ponownie bindingów; logi na USB pozostały OFF.
 - Test sprzętowy dotyczy wariantu internal i dwóch kanałów. External oraz
   pozostałe kombinacje zweryfikowano kompilacją i testami dekodera.
+
+## Zigbee OTA 2.2.0 — 26 listopada 2026
+
+- Skompilowano external i internal z klientem OTA, dwoma slotami oraz
+  CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y w ESP-IDF 5.4.2 / Zigbee SDK 1.6.9.
+- Sześć zestawów testów C z ASan/UBSan przeszło: control, bindings, serial,
+  transport, session i ota. Odbiornik OTA sprawdzono dla bloków 1–150 bajtów,
+  każdego ucięcia strumienia, nieznanego tagu, przepełnienia slotu, błędu
+  zapisu i niezgodnej wersji aplikacji.
+- Testy Node obejmują rzeczywisty parser herdsman dla obu .zigbee, SHA512,
+  zawartość aplikacji, typy anten, metadane indeksu i obsługę OTA w konwerterze.
+  Sprawdzono zarówno kontenery testowe, jak i gotowe obrazy z kompilacji.
+- Na wyraźnie wskazanym XIAO z anteną zewnętrzną wykonano lokalną kopię 4 MB
+  i snapshot konfiguracji. Zapisano oraz zweryfikowano bootloader, tablicę
+  partycji, aplikację 2.2.0-rc1 i początkowe otadata; bez erase_flash i bez
+  zapisu w obszarach NVS/zb_storage/zb_fct.
+- USB potwierdziło 2.2.0-rc1, external, OTA enabled=true, image_type=0xC601,
+  file_version=0x0201FFFF oraz slot ota_0. Pięć STATUS potwierdziło istniejącą
+  sieć i bindingi. Wszystkie osiem GET pozostało identyczne przed/po migracji.
+  Weryfikacja trwała ponad 10 sekund; aplikacja pozostała aktywna, logi OFF.
+- Wersja startowa celowo reklamuje niższy numer OTA, aby użytkownik mógł
+  przetestować transfer do produkcyjnego obrazu 2.2.0. Dokładne obrazy
+  produkcyjne nie mają jeszcze potwierdzonego rozruchu na sprzęcie.
+- Pełny transfer .zigbee przez Zigbee2MQTT, start z ota_1 po transferze i
+  fizyczny test rollbacku nie zostały jeszcze wykonane. Użytkownik wybrał
+  samodzielny test OTA po podmianie konwertera. Nie należy traktować testów
+  formatu i migracji USB jako potwierdzenia transferu radiowego.

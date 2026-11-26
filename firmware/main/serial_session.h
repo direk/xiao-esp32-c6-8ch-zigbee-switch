@@ -11,6 +11,10 @@ typedef struct {
 } serial_uart_stats_t;
 typedef struct {
     const char *firmware_version;
+    const char *antenna, *ota_state, *ota_slot;
+    bool ota_enabled;
+    uint16_t ota_manufacturer, ota_image_type;
+    uint32_t ota_file_version, ota_received, ota_total;
     serial_port_id_t port;
     bool logs_enabled;
     uint32_t log_dropped;

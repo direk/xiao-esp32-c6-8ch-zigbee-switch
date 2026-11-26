@@ -23,6 +23,14 @@ static void info(const serial_runtime_t *r,char *reply,size_t cap) {
         "\"TRIPLE\",\"HOLD\",\"SET\",\"RELEASE ALL\",\"RESET\",\"LOG\"]}\n",
         r->firmware_version,SERIAL_PROTOCOL_VERSION,r->boot_id,
         r->port==SERIAL_PORT_USB?"usb":"uart",r->logs_enabled?"true":"false",SERIAL_DEDUP_DEPTH,SERIAL_HOLD_MAX_MS);
+    // Append OTA diagnostics only to INFO; STATUS retains its bounded wire size.
+    if (!j.failed && j.used>=2) {
+        j.used-=2;
+        append(&j,",\"antenna\":\"%s\",\"ota\":{\"enabled\":%s,\"manufacturer\":%u,\"image_type\":%u,"
+            "\"file_version\":%"PRIu32",\"slot\":\"%s\",\"state\":\"%s\",\"received\":%"PRIu32",\"total\":%"PRIu32"}}\n",
+            r->antenna?r->antenna:"unknown",r->ota_enabled?"true":"false",r->ota_manufacturer,r->ota_image_type,
+            r->ota_file_version,r->ota_slot?r->ota_slot:"unknown",r->ota_state?r->ota_state:"idle",r->ota_received,r->ota_total);
+    }
     finish(&j);
 }
 static void status(const serial_session_t *s,const serial_input_t *state,const serial_runtime_t *r,

@@ -13,16 +13,29 @@ jobs:
     container: espressif/idf:v5.4.2
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test converter and OTA containers
+        shell: bash
+        run: |
+          npm ci --ignore-scripts
+          npm test
       - name: Test binding table decoder
         shell: bash
         run: |
           cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -I firmware/main firmware/main/control.c firmware/main/binding_table.c tests/binding_table_test.c -o /tmp/xiao-binding-test
           /tmp/xiao-binding-test
+          cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -I firmware/main firmware/main/ota_stream.c tests/ota_stream_test.c -o /tmp/xiao-ota-test
+          /tmp/xiao-ota-test
       - name: Build and package external and internal antenna firmware
         shell: bash
         run: |
           . /opt/esp/idf/export.sh
           python scripts/package_release.py --idf-path "$IDF_PATH"
+      - name: Validate real OTA firmware images using herdsman
+        shell: bash
+        run: XIAO_OTA_DIST=dist node --test tests/ota_image.test.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: xiao-both-antennas
@@ -36,3 +49,8 @@ jobs:
             dist/xiao-c6-8ch.mjs
             dist/manifest.json
             dist/SHA256SUMS
+            dist/*.zigbee
+            dist/ota-index.json
+            dist/bootloader.bin
+            dist/partition-table.bin
+            dist/ota-data-initial.bin

@@ -101,8 +101,9 @@ const descriptions = {
 export default {
     zigbeeModel: ['XIAO-C6-8CH', 'XIAO-C6-4CH-FAIL1'],
     model: 'XIAO-C6-8CH', vendor: 'DIY-XIAO',
-    description: 'Eight-channel mains-powered Zigbee switch/dimmer/scene controller, external antenna',
-    version: '0.0.6',
+    description: 'Eight-channel mains-powered Zigbee switch/dimmer/scene controller with Zigbee OTA and two antenna variants',
+    version: '0.0.7',
+    ota: {modelId: 'XIAO-C6-8CH', manufacturerName: 'DIY-XIAO'},
     extend: [customCluster, {isModernExtend: true, configure: [async (device) => {
         for (const ep of device.endpoints.filter((x) => x.ID >= 1 && x.ID <= 8)) {
             // Read in small batches so configuration fits a normal APS response.

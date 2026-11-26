@@ -456,3 +456,12 @@ zegara sekwencji i rozpoznawania przycisków; nie zastępuje testu po przewodach
 Test transportu wykonuje produkcyjny kod z zastępczymi kolejkami i sterownikiem
 UART. Sprawdza rozdzielenie kontekstów, przeciążenie i odkładanie wykonania przy
 pełnej kolejce odpowiedzi. Nie symuluje rzeczywistych przerwań i harmonogramu RTOS.
+
+## Dodatkowe pola INFO od 2.2.0
+
+INFO zwraca także `antenna` (external/internal) i `ota`: enabled,
+manufacturer, image_type, file_version, slot, state, received, total.
+Postęp received/total dotyczy bajtów aplikacji, bez nagłówka kontenera Zigbee.
+Slot ota_0 albo ota_1 oznacza uruchomioną aplikację. Stany OTA: idle,
+downloading, validating, ready, reboot_pending, error. Te pola nie zmieniają
+składni komend ani niezależnych ustawień LOG dla obu portów.

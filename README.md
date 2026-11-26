@@ -1,12 +1,12 @@
 # XIAO ESP32-C6 — osiem kanałów Zigbee
 
-Wersja **2.1.3** dla Seeed Studio XIAO ESP32-C6 ze stałym zasilaniem USB i
+Wersja **2.2.0** dla Seeed Studio XIAO ESP32-C6 ze stałym zasilaniem USB i
 anteną zewnętrzną U.FL albo wewnętrzną (osobne obrazy firmware’u). Urządzenie pracuje jako router Zigbee, bez usypiania
 i bez heartbeat. Każdy kanał ma własny endpoint, konfigurację i bindingi.
 
 [Kod źródłowy](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch).
-[Wydanie 2.1.3 — firmware, konwerter i kompletna paczka](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch/releases/tag/v2.1.3).
-Skrypt pakujący generuje również lokalne `dist/xiao-8ch-v2.1.3.zip`.
+[Wydanie 2.2.0 — firmware, konwerter i kompletna paczka](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch/releases/tag/v2.2.0).
+Skrypt pakujący generuje również lokalne `dist/xiao-8ch-v2.2.0.zip`.
 [Wydanie 1.2.0 na GitHubie](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch/releases/tag/v1.2.0)
 jest starszą wersją czterokanałową.
 
@@ -62,7 +62,8 @@ włączyć Permit join. Zwykłe komendy UART z 2.0.0 nadal działają bez zmian.
 komendę. Domyślnie oba porty mają logi wyłączone; po restarcie znów są wyłączone.
 Logi mają prefiks `#LOG `, a INFO/STATUS pokazują port i `logs_enabled`.
 Konwerter Z2M z wydania 2.0.0 pozostaje zgodny; klaster ustawień nie zmienił się.
-Warianty 2.1.3 mają ten sam układ partycji i konfiguracji; zmiana anteny nie wymaga resetu sieci.
+Od 2.2.0 dostępne jest [OTA przez Zigbee2MQTT](docs/OTA.md). Pierwsza migracja
+z 2.1.x wymaga USB i nowej tablicy partycji, z zachowaniem danych sieci.
 [Historia zmian](CHANGELOG.md) · [Zakres wykonanych testów](docs/VALIDATION.md).
 
 Podłącz TX urządzenia do D7/RX, RX do D6/TX i wspólną masę.
@@ -196,9 +197,9 @@ zgaszone, obie zapalone i zwolnienie przycisku podczas regulacji.
 
 ## Konwerter Z2M i aktualizacja z wersji czterokanałowej
 
-1. Wgraj samą aplikację 2.1.3 pod 0x10000, **bez erase_flash**. Układ partycji
-   pozostaje bez zmian. Firmware migruje ustawienia input_mode/invert CH1–CH4,
-   zachowuje sieć i bindingi. CH5–CH8 startują jako push/toggle.
+1. Zainstaluj zestaw migracyjny USB z [instrukcji OTA](docs/OTA.md),
+   **bez erase_flash**. Nie wystarczy sama aplikacja. Firmware migruje
+   ustawienia input_mode/invert CH1–CH4; CH5–CH8 startują jako push/toggle.
 2. Zastąp poprzedni konwerter plikiem `zigbee2mqtt/xiao-c6-8ch.mjs`.
    Usuń starą kopię; nie ładuj jednocześnie konwertera 4CH i 8CH.
 3. Uruchom ponownie Z2M. Dla istniejącego urządzenia wykonaj ponowny interview,
@@ -221,9 +222,9 @@ i `throttle: 0`. W Z2M wymagającym włączenia zewnętrznych konwerterów ustaw
 
 ## Wgranie obrazów
 
-Rozpakuj `dist/xiao-8ch-v2.1.3.zip`. Wybierz wariant odpowiadający antenie:
+Rozpakuj `dist/xiao-8ch-v2.2.0.zip`. Wybierz wariant odpowiadający antenie:
 
-| Antena | Aktualizacja (0x10000) | Czysta instalacja (0x0) |
+| Antena | Aplikacja do zestawu USB (0x10000) | Czysta instalacja (0x0) |
 |---|---|---|
 | Zewnętrzna U.FL | `application-external.bin` | `firmware-factory-external.bin` |
 | Wewnętrzna | `application-internal.bin` | `firmware-factory-internal.bin` |
@@ -246,11 +247,12 @@ python -m esptool --chip esp32c6 --port PORT erase_flash
 python -m esptool --chip esp32c6 --port PORT write_flash 0x0 firmware-factory-external.bin
 ```
 
-`erase_flash` usuwa sieć, bindingi i wszystkie ustawienia. Do aktualizacji z 1.x
-lub kolejnej wersji z tym samym układem partycji użyj wyłącznie:
+`erase_flash` usuwa sieć, bindingi i wszystkie ustawienia. Do migracji z 2.1.x
+i ręcznych aktualizacji USB 2.2.x użyj osobnych segmentów, zachowując NVS
+i dane Zigbee (przykład anteny zewnętrznej):
 
 ```sh
-python -m esptool --chip esp32c6 --port PORT write_flash 0x10000 application-external.bin
+python -m esptool --chip esp32c6 --port PORT write_flash 0x0 bootloader.bin 0x8000 partition-table.bin 0x10000 application-external.bin 0x196000 ota-data-initial.bin
 ```
 
 Model/endpointy po takiej aktualizacji odśwież w Z2M przez interview, nie reset
@@ -265,7 +267,8 @@ wyłączonym Z2M/koordynatorze. Sprawdź konfigurację po restarcie oraz to, że
 pozostałe kanały nie reagują na przycisk innego kanału. Po aktualizacji deskryptora
 Z2M musi widzieć osiem endpointów. Testy komputerowe nie zastępują tego sprawdzenia.
 
-OTA przez Zigbee nie jest zaimplementowane; aktualizacja odbywa się przez USB.
+OTA działa od 2.2.0. Pliki `ota/*.zigbee` i indeks są w repozytorium oraz
+w wydaniu. [Instrukcja migracji USB, konfiguracji Z2M i aktualizacji](docs/OTA.md).
 
 ## Reset urządzenia
 
@@ -402,6 +405,7 @@ npm ci --ignore-scripts
 npm test
 npm run test:control
 npm run test:bindings
+npm run test:ota
 npm run test:serial
 npm run test:transport
 npm run test:session
@@ -420,11 +424,14 @@ python scripts/package_release.py --idf-path "$IDF_PATH"
 
 Skrypt najpierw kompiluje oba warianty (również przyrostowo), a potem używa
 programu esptool zainstalowanego razem z ESP-IDF; nie wymaga
-ręcznego kopiowania obrazów. Utworzy `dist/xiao-8ch-v2.1.3.zip` w głównym
+ręcznego kopiowania obrazów. Utworzy `dist/xiao-8ch-v2.2.0.zip` w głównym
 katalogu projektu i usunie swoje pliki tymczasowe. ZIP zawiera obrazy do wgrania,
 źródła, konwerter, dokumentację, licencje i sumy kontrolne. Obok ZIP powstaną
 cztery obrazy z nazwami anten, konwerter, `manifest.json` i `SHA256SUMS` do
-publikacji w release. Manifest opisuje antenę, adres i SHA256 każdego obrazu.
+publikacji w release. Powstaną także dwa pliki `.zigbee`, `ota-index.json`
+i trzy wspólne segmenty do migracji USB. Manifest opisuje antenę, identyfikatory
+OTA, adresy i sumy kontrolne. Opcja `--sync-repository-ota` zapisuje pliki OTA
+i indeks także w śledzonym katalogu `ota/`.
 Brak kompilacji któregokolwiek wariantu przerywa pakowanie. GitHub Actions
 wykonuje ten sam proces dla main, pull requestów i tagów; artefakt
 `xiao-both-antennas` zawiera oba warianty.

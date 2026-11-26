@@ -1,5 +1,6 @@
 """Build BOTH antenna variants. Run in the activated ESP-IDF environment."""
 import argparse
+import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -15,13 +16,20 @@ def build_all(root, idf_path):
         raise SystemExit("ESP-IDF not found; activate export.sh or pass --idf-path")
     for antenna in VARIANTS:
         build = firmware / "build" / antenna
+        # These sdkconfig files belong to the build, not to runtime channel settings.
+        # ESP-IDF otherwise keeps old defaults (including rollback disabled in 2.1.x).
+        defaults_hash = hashlib.sha256((firmware / "sdkconfig.defaults").read_bytes()).hexdigest()
+        stamp = build / ".defaults.sha256"
+        if not stamp.is_file() or stamp.read_text() != defaults_hash:
+            (build / "sdkconfig").unlink(missing_ok=True)
         print(f"Building antenna={antenna}", flush=True)
         subprocess.run([
             sys.executable, str(idf), "-C", str(firmware), "-B", str(build),
             "-D", "IDF_TARGET=esp32c6",
             "-D", f"SDKCONFIG={build / 'sdkconfig'}",
-            "-D", f"XIAO_ANTENNA={antenna}", "build",
+            "-D", f"XIAO_ANTENNA={antenna}", "reconfigure", "build",
         ], check=True)
+        stamp.write_text(defaults_hash)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,18 @@
 # Historia zmian
 
+## 2.2.0 — 26 listopada 2026
+
+- Standardowy klient Zigbee OTA na endpoint 1 i obsługa OTA w konwerterze 0.0.7.
+- Dwa sloty aplikacji i rollback, z zachowaniem adresów NVS i danych Zigbee.
+  Pierwsza migracja z 2.1.x wymaga zestawu USB, nie samej aplikacji.
+- Osobne pliki .zigbee i identyfikatory obrazu dla obu anten, indeks z SHA512
+  w repozytorium i wszystkie obrazy jako załączniki wydania.
+- Walidacja strumienia, rozmiaru, wariantu, wersji i obrazu ESP-IDF; wybór
+  nowego slotu dopiero po zakończeniu weryfikacji.
+- INFO pokazuje antenę, slot, identyfikatory OTA i postęp odbioru.
+- Testy kontenerów niezależnym parserem herdsman, podziałów bloków i błędów
+  transferu; obie anteny nadal budowane przez standardowy skrypt i CI.
+
 ## 2.1.3 — 26 listopada 2026
 
 - Naprawa odczytu tablicy bindingów zawierającej wpisy grupowe. Grupa zajmuje

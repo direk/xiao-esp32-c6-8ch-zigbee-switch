@@ -1,6 +1,8 @@
 # Name,Type,SubType,Offset,Size,Flags
 nvs,data,nvs,0x9000,0x6000,
 phy_init,data,phy,0xf000,0x1000,
-factory,app,factory,0x10000,1536K,
+ota_0,app,ota_0,0x10000,1536K,
 zb_storage,data,fat,0x190000,16K,
 zb_fct,data,fat,0x194000,4K,
+otadata,data,ota,0x196000,8K,
+ota_1,app,ota_1,0x1a0000,1536K,

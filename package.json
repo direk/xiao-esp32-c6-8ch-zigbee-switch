@@ -3,12 +3,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test tests/converter.test.mjs tests/serial_get.test.mjs",
+    "test": "node --test tests/converter.test.mjs tests/serial_get.test.mjs tests/ota_image.test.mjs",
     "test:control": "cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -I firmware/main firmware/main/control.c tests/control_test.c -o /private/tmp/xiao-control-test && /private/tmp/xiao-control-test",
     "test:serial": "cc -std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Werror -fsanitize=address,undefined -I firmware/main firmware/main/control.c firmware/main/serial_input.c tests/serial_input_test.c -o /private/tmp/xiao-serial-test && /private/tmp/xiao-serial-test",
     "test:transport": "cc -std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Werror -fsanitize=address,undefined -I tests/stubs -I firmware/main firmware/main/control.c firmware/main/serial_input.c firmware/main/serial_transport.c firmware/main/serial_session.c tests/serial_transport_test.c -o /private/tmp/xiao-transport-test && /private/tmp/xiao-transport-test",
     "test:session": "cc -std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Werror -fsanitize=address,undefined -I firmware/main firmware/main/control.c firmware/main/serial_input.c firmware/main/serial_session.c tests/serial_session_test.c -o /private/tmp/xiao-session-test && /private/tmp/xiao-session-test",
-    "test:bindings": "cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -I firmware/main firmware/main/control.c firmware/main/binding_table.c tests/binding_table_test.c -o /private/tmp/xiao-binding-test && /private/tmp/xiao-binding-test"
+    "test:bindings": "cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -I firmware/main firmware/main/control.c firmware/main/binding_table.c tests/binding_table_test.c -o /private/tmp/xiao-binding-test && /private/tmp/xiao-binding-test",
+    "test:ota": "cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -I firmware/main firmware/main/ota_stream.c tests/ota_stream_test.c -o /private/tmp/xiao-ota-test && /private/tmp/xiao-ota-test"
   },
   "devDependencies": {
     "zigbee-herdsman-converters": "26.135.0"

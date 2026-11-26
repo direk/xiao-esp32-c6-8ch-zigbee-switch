@@ -14,7 +14,8 @@ static bool reset_fails;
 static bool reset_callback(void *unused) {(void)unused;++resets;return !reset_fails;}
 static void init(void) {
     memset(&session,0,sizeof(session));memset(&state,0,sizeof(state));resets=0;reset_fails=false;
-    runtime=(serial_runtime_t){.firmware_version="2.1.0",.boot_id=UINT32_MAX,.joined=true,.bindings_known=true,.short_address=0xabcd};
+    runtime=(serial_runtime_t){.firmware_version="2.2.0",.antenna="internal",.ota_enabled=true,.ota_manufacturer=0x131b,.ota_image_type=0xc600,
+        .ota_file_version=0x02020000,.ota_slot="ota_1",.ota_state="downloading",.ota_received=UINT32_MAX,.ota_total=UINT32_MAX,.boot_id=UINT32_MAX,.joined=true,.bindings_known=true,.short_address=0xabcd};
     for(unsigned i=0;i<CHANNELS;++i) {channel_defaults(&cfg[i]);priority[i]=1;}
 }
 static bool request(const char *line) {
@@ -59,7 +60,7 @@ int main(int argc,char **argv) {
     request("@7 HOLD 2 9999999999999999999\n");assert(!strcmp(reply,"@7 ERR DURATION\n"));
     request("@7\n");assert(!strcmp(reply,"@7 ERR SYNTAX\n"));request("RESET ALL\n");assert(!strcmp(reply,"ERR SYNTAX\n") && !resets);
     runtime.joined=false;runtime.bindings_known=false;
-    request("INFO\n");assert(strstr(reply,"\"protocol\":2") && strstr(reply,"\"firmware\":\"2.1.0\""));
+    request("INFO\n");assert(strstr(reply,"\"protocol\":2") && strstr(reply,"\"firmware\":\"2.2.0\""));
     request("STATUS\n");assert(strstr(reply,"\"joined\":false") && strstr(reply,"\"short_address\":null"));
     channel_config_t saved[CHANNELS];memcpy(saved,cfg,sizeof(saved));uint8_t saved_priority[CHANNELS];memcpy(saved_priority,priority,sizeof(priority));
     reset_fails=true;assert(!request("@100 RESET\n") && !strcmp(reply,"@100 ERR STORAGE\n"));

@@ -13,6 +13,7 @@
 #include "nvs_flash.h"
 #include "control.h"
 #include "binding_table.h"
+#include "ota_client.h"
 #include "zboss_api.h"
 #include "serial_input.h"
 #include "serial_transport.h"
@@ -278,8 +279,20 @@ static esp_err_t save_config(void) {
     if(err==ESP_OK) {dirty=false;ESP_LOGI(TAG,"Configuration saved to NVS");}
     return err;
 }
+static bool prepare_ota_restart(void) {
+    if(save_config()!=ESP_OK)return false;
+    for(unsigned i=0;i<CHANNELS;++i) {
+        command_t command;
+        if(button_cancel(&inputs[i],&command))dispatch(i,&command);
+        serial_input_cancel(&serial_input,i);
+        button_init(&inputs[i],active(i),now_ms());
+    }
+    return true;
+}
 static bool request_network_reset(void *unused) {
     (void)unused;
+    if(ota_client_reboot_pending())return false;
+    ota_client_cancel();
     if(save_config()!=ESP_OK)return false;
     // Stop direct holds while old bindings/network still exist, then release UART states.
     for(unsigned i=0;i<CHANNELS;++i) {
@@ -296,17 +309,19 @@ static bool request_network_reset(void *unused) {
 static void tick(uint8_t unused) {
     (void)unused;
     uint64_t now = now_ms();
+    ota_client_poll(now);
     refresh_bindings(now);
     update_route();
     serial_input_tick(&serial_input,now);
     serial_runtime_t runtime={.firmware_version=esp_app_get_description()->version,
         .boot_id=serial_boot_id,.joined=joined,.bindings_known=bindings_known,
-        .factory_new=esp_zb_bdb_is_factory_new(),.reset_pending=reset_pending,
+        .factory_new=esp_zb_bdb_is_factory_new(),.reset_pending=reset_pending || ota_client_reboot_pending(),
         .short_address=joined?esp_zb_get_short_address():0xffff};
     for(unsigned i=0;i<CHANNELS;++i) {
         if(physical(i))runtime.physical_mask|=1U<<i;
         runtime.binding_clusters[i]=binding_clusters[i];runtime.control_path[i]=channel_route[i];
     }
+    ota_client_runtime(&runtime);
     serial_transport_poll(&serial_input,cfg.channels,binding_priority,&runtime,now,request_network_reset,NULL);
     if(serial_reset_ready(reset_pending,reset_requested_at,serial_transport_reset_acknowledged(),now)) {
         ESP_LOGW(TAG,"UART RESET: clearing Zigbee network/bindings; channel settings retained");
@@ -319,7 +334,7 @@ static void tick(uint8_t unused) {
             if(button_cancel(&inputs[i],&command))dispatch(i,&command);
             button_init(&inputs[i],active(i),now);rebase[i]=false;
         }
-        if (!bindings_known || reset_pending) continue;
+        if (!bindings_known || reset_pending || ota_client_reboot_pending()) continue;
         if(button_poll(&inputs[i],active(i),&cfg.channels[i],now,&command))dispatch(i,&command);
     }
     if (dirty && now - dirty_at >= 1000) {
@@ -360,18 +375,21 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *s) {
         } else {
             joined = true;
             ESP_LOGI(TAG, "Restored Zigbee network; bindings retained");
+            ota_client_joined();
         }
         break;
     case ESP_ZB_BDB_SIGNAL_STEERING:
         if (s->esp_err_status == ESP_OK) {
             joined = true;
             ESP_LOGI(TAG, "Joined network, short address 0x%04x", esp_zb_get_short_address());
+            ota_client_joined();
         } else {
             esp_zb_scheduler_alarm(commission, ESP_ZB_BDB_MODE_NETWORK_STEERING, 10000);
         }
         break;
     case ESP_ZB_ZDO_SIGNAL_LEAVE:
         joined = false;
+        ota_client_cancel();
         bindings_known = scan_active = coordinator_known = false;
         bound_mask = 0;
         memset(cluster_masks,0,sizeof(cluster_masks));
@@ -391,6 +409,7 @@ static void add_custom(esp_zb_attribute_list_t *a, uint16_t id, uint8_t type, ui
 
 static void zigbee_task(void *arg) {
     (void)arg;
+    ESP_ERROR_CHECK(esp_zb_io_buffer_size_set(160));
     ESP_ERROR_CHECK(esp_zb_aps_src_binding_table_size_set(32));
     esp_zb_cfg_t network = {
         .esp_zb_role = ESP_ZB_DEVICE_TYPE_ROUTER,
@@ -403,12 +422,17 @@ static void zigbee_task(void *arg) {
     static char model[] = "\x0b" "XIAO-C6-8CH";
     const uint8_t rw = ESP_ZB_ZCL_ATTR_ACCESS_READ_WRITE;
     const uint8_t rr = ESP_ZB_ZCL_ATTR_ACCESS_READ_ONLY | ESP_ZB_ZCL_ATTR_ACCESS_REPORTING;
+    static uint8_t build_id[33];
+    size_t build_length=strnlen(esp_app_get_description()->version,31);
+    build_id[0]=build_length;memcpy(build_id+1,esp_app_get_description()->version,build_length);
     for (uint8_t ep = 1; ep <= CHANNELS; ++ep) {
         esp_zb_on_off_switch_cfg_t defaults = ESP_ZB_DEFAULT_ON_OFF_SWITCH_CONFIG();
         esp_zb_cluster_list_t *clusters = esp_zb_on_off_switch_clusters_create(&defaults);
         esp_zb_attribute_list_t *basic = esp_zb_cluster_list_get_cluster(clusters, ESP_ZB_ZCL_CLUSTER_ID_BASIC, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
         ESP_ERROR_CHECK(esp_zb_basic_cluster_add_attr(basic, ESP_ZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID, manufacturer));
         ESP_ERROR_CHECK(esp_zb_basic_cluster_add_attr(basic, ESP_ZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID, model));
+        ESP_ERROR_CHECK(esp_zb_basic_cluster_add_attr(basic, ESP_ZB_ZCL_ATTR_BASIC_SW_BUILD_ID, build_id));
+        if(ep==XIAO_OTA_ENDPOINT)ESP_ERROR_CHECK(ota_client_add_cluster(clusters));
         // Empty client attribute lists advertise the clusters used by outgoing bound commands.
         ESP_ERROR_CHECK(esp_zb_cluster_list_add_level_cluster(clusters,esp_zb_zcl_attr_list_create(CL_LEVEL),ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE));
         ESP_ERROR_CHECK(esp_zb_cluster_list_add_color_control_cluster(clusters,esp_zb_zcl_attr_list_create(CL_COLOR),ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE));
@@ -444,6 +468,7 @@ static void zigbee_task(void *arg) {
         .cluster_id = CLUSTER, .cluster_role = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
         .check_value_cb = check_value, .write_attr_cb = write_attr,
     }));
+    esp_zb_core_action_handler_register(ota_client_action);
     esp_zb_aps_data_indication_handler_register(aps_indication);
     esp_zb_set_primary_network_channel_set(ESP_ZB_TRANSCEIVER_ALL_CHANNELS_MASK);
     ESP_ERROR_CHECK(esp_zb_start(false));
@@ -497,6 +522,7 @@ void app_main(void) {
         button_init(&inputs[i], active(i), now_ms());
         events[i] = (esp_random() & 0xffffff) << 8; // Avoid reusing event counters after a reboot.
     }
+    ota_client_init(prepare_ota_restart);
     serial_boot_id=esp_random();
     serial_transport_start();
     esp_zb_platform_config_t platform = {

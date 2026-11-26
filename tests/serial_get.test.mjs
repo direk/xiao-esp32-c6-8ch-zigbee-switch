@@ -57,9 +57,11 @@ test('INFO and STATUS JSON preserve types, diagnostics, maximum counters and opt
         const lines = execFileSync(executable, ['--json'], {encoding: 'utf8'}).trim().split('\n');
         assert.equal(lines.length, 3);
         const info = JSON.parse(lines[0]);
-        assert.deepEqual(info, {firmware: '2.1.0', protocol: 2, model: 'XIAO-C6-8CH', boot_id: 4294967295,
+        assert.deepEqual(info, {firmware: '2.2.0', protocol: 2, model: 'XIAO-C6-8CH', boot_id: 4294967295,
             channels: 8, baud: 115200, format: '8N1', port: 'uart', transports: ['uart','usb'], logs_enabled: false, request_ids: true, id_order: 'increasing', dedup_depth: 16, hold_timeout_ms: 10000,
-            commands: ['PING','INFO','STATUS','GET','PRESS','RELEASE','CLICK','DOUBLE','TRIPLE','HOLD','SET','RELEASE ALL','RESET','LOG']});
+            commands: ['PING','INFO','STATUS','GET','PRESS','RELEASE','CLICK','DOUBLE','TRIPLE','HOLD','SET','RELEASE ALL','RESET','LOG'],
+            antenna: 'internal', ota: {enabled: true, manufacturer: 0x131b, image_type: 0xc600, file_version: 0x02020000,
+                slot: 'ota_1', state: 'downloading', received: 4294967295, total: 4294967295}});
         const offline = JSON.parse(lines[1]);
         assert.equal(offline.uptime_ms, 123456);
         assert.deepEqual(offline.zigbee, {joined: false, bindings_known: false, factory_new: true,
