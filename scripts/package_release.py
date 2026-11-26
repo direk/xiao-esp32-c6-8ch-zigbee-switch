@@ -9,29 +9,47 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+from build_firmware import build_all, VARIANTS
 
 p = argparse.ArgumentParser()
 p.add_argument("--idf-path", type=Path, required=True)
-p.add_argument("--hardware-boot-tested", action="store_true", help="Mark this exact firmware as boot-tested on hardware")
+p.add_argument("--hardware-boot-tested", action="append", choices=VARIANTS, default=[], help="Antenna variant boot-tested on hardware; repeat only for tested variants")
 args = p.parse_args()
 root = Path(__file__).resolve().parents[1]
 firmware_version = re.search(r'set\(PROJECT_VER "([^"]+)"\)', (root / "firmware/CMakeLists.txt").read_text()).group(1)
+build_all(root, args.idf_path.resolve())
 release_name = f"xiao-8ch-v{firmware_version}"
 staging = tempfile.TemporaryDirectory(prefix="xiao-release-")
 out = Path(staging.name) / release_name
 out.mkdir(parents=True)
-build = root / "firmware/build"
-subprocess.run([
-    sys.executable, "-m", "esptool", "--chip", "esp32c6", "merge_bin",
-    "-o", str(out / "firmware-factory.bin"), "--flash_mode", "dio",
-    "--flash_size", "4MB", "--flash_freq", "80m",
-    "0x0", str(build / "bootloader/bootloader.bin"),
-    "0x8000", str(build / "partition_table/partition-table.bin"),
-    "0x10000", str(build / "xiao_zigbee_8ch.bin"),
-], check=True)
-shutil.copy2(build / "xiao_zigbee_8ch.bin", out / "application.bin")
-for directory in ["zigbee2mqtt", "docs", "tests", "scripts"]:
-    shutil.copytree(root / directory, out / directory, dirs_exist_ok=True)
+images = []
+for antenna in VARIANTS:
+    build = root / "firmware/build" / antenna
+    description = json.loads((build / "project_description.json").read_text())
+    if description["project_version"] != firmware_version:
+        raise SystemExit(f"Wrong firmware version in {build}")
+    cache = (build / "CMakeCache.txt").read_text()
+    if f"XIAO_ANTENNA:STRING={antenna}\n" not in cache:
+        raise SystemExit(f"Wrong antenna selection in {build}")
+    factory = f"firmware-factory-{antenna}.bin"
+    application = f"application-{antenna}.bin"
+    subprocess.run([
+        sys.executable, "-m", "esptool", "--chip", "esp32c6", "merge_bin",
+        "-o", str(out / factory), "--flash_mode", "dio",
+        "--flash_size", "4MB", "--flash_freq", "80m",
+        "0x0", str(build / "bootloader/bootloader.bin"),
+        "0x8000", str(build / "partition_table/partition-table.bin"),
+        "0x10000", str(build / "xiao_zigbee_8ch.bin"),
+    ], check=True)
+    shutil.copy2(build / "xiao_zigbee_8ch.bin", out / application)
+    for name, offset in [(factory, "0x0"), (application, "0x10000")]:
+        images.append({"file": name, "antenna": antenna, "offset": offset,
+                       "hardware_boot_tested": antenna in args.hardware_boot_tested,
+                       "bytes": (out / name).stat().st_size,
+                       "sha256": hashlib.sha256((out / name).read_bytes()).hexdigest()})
+for directory in ["zigbee2mqtt", "docs", "tests", "scripts", ".github"]:
+    shutil.copytree(root / directory, out / directory, dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 shutil.copytree(root / "firmware", out / "firmware", dirs_exist_ok=True,
                 ignore=shutil.ignore_patterns("build", "managed_components", "sdkconfig", "sdkconfig.old"))
 for name in [".gitignore", "README.md", "CHANGELOG.md", "LICENSE", "package.json", "package-lock.json"]:
@@ -53,8 +71,8 @@ manifest = {
     "converter_tested_with": "zigbee-herdsman-converters 26.135.0",
     "converter_revision": "0.0.6",
     "hardware_tested": False,
-    "hardware_boot_tested": args.hardware_boot_tested,
-    "antenna": "external",
+    "hardware_boot_tested": all(v in args.hardware_boot_tested for v in VARIANTS),
+    "antenna_variants": list(VARIANTS),
     "routing": "per_cluster_binding_otherwise_action",
     "binding_priority": {"per_channel": True, "default": "ON", "persistent": True,
                          "off_behavior": "direct_control_and_action"},
@@ -69,9 +87,7 @@ manifest = {
              "usb_commands": True, "sessions": "per_port", "logs_default": False,
              "log_control": "per_port_LOG_0_1", "log_prefix": "#LOG "},
     "modes": 13,
-    "images": [{"file": name, "offset": offset, "bytes": (out / name).stat().st_size,
-                "sha256": hashlib.sha256((out / name).read_bytes()).hexdigest()}
-               for name, offset in [("firmware-factory.bin", "0x0"), ("application.bin", "0x10000")]],
+    "images": images,
 }
 (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
 files = sorted(f for f in out.rglob("*") if f.is_file() and f.name != "SHA256SUMS")
@@ -82,5 +98,14 @@ with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as z:
     for f in sorted(out.rglob("*")):
         if f.is_file():
             z.write(f, Path(out.name) / f.relative_to(out))
+# Standalone release attachments use the same bytes as the complete archive.
+for name in [i["file"] for i in images] + ["manifest.json"]:
+    shutil.copy2(out / name, archive.parent / name)
+shutil.copy2(root / "zigbee2mqtt/xiao-c6-8ch.mjs", archive.parent / "xiao-c6-8ch.mjs")
+attachments = [archive.name, "manifest.json", "xiao-c6-8ch.mjs"] + [i["file"] for i in images]
+(archive.parent / "SHA256SUMS").write_text("".join(
+    f"{hashlib.sha256((archive.parent / name).read_bytes()).hexdigest()}  {name}\n"
+    for name in sorted(attachments)))
+print(f"Packaged {archive} and both antenna variants")
+
 staging.cleanup()
-print(f"Packaged {archive}")

@@ -1,12 +1,12 @@
 # XIAO ESP32-C6 — osiem kanałów Zigbee
 
-Wersja **2.1.1** dla Seeed Studio XIAO ESP32-C6 ze stałym zasilaniem USB i
-zewnętrzną anteną U.FL. Urządzenie pracuje jako router Zigbee, bez usypiania
+Wersja **2.1.2** dla Seeed Studio XIAO ESP32-C6 ze stałym zasilaniem USB i
+anteną zewnętrzną U.FL albo wewnętrzną (osobne obrazy firmware’u). Urządzenie pracuje jako router Zigbee, bez usypiania
 i bez heartbeat. Każdy kanał ma własny endpoint, konfigurację i bindingi.
 
 [Kod źródłowy](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch).
-[Wydanie 2.1.1 — firmware, konwerter i kompletna paczka](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch/releases/tag/v2.1.1).
-Skrypt pakujący generuje również lokalne `dist/xiao-8ch-v2.1.1.zip`.
+[Wydanie 2.1.2 — firmware, konwerter i kompletna paczka](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch/releases/tag/v2.1.2).
+Skrypt pakujący generuje również lokalne `dist/xiao-8ch-v2.1.2.zip`.
 [Wydanie 1.2.0 na GitHubie](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch/releases/tag/v1.2.0)
 jest starszą wersją czterokanałową.
 
@@ -35,8 +35,8 @@ D6/TX (GPIO16) i D7/RX (GPIO17) obsługują komendy UART 3,3 V:
 115200 baud, 8N1, bez kontroli przepływu. D10 (GPIO18) pozostaje wolny. CH7/CH8 zajmują D8/D9, więc te piny nie są dostępne dla SPI.
 Przy aktualizacji poprzedniej wersji 8CH przenieś przewód CH7 z D6 na D8,
 a CH8 z D7 na D9. Numery kanałów, ustawienia i bindingi pozostają te same.
-Te same komendy są dostępne przez USB-C (USB Serial/JTAG, GPIO12/13). GPIO3=LOW i GPIO14=HIGH wybierają
-zewnętrzną antenę; **D3 to GPIO21**, niezależny od GPIO3.
+Te same komendy są dostępne przez USB-C (USB Serial/JTAG, GPIO12/13). GPIO3=LOW włącza przełącznik antenowy; GPIO14=HIGH wybiera
+antenę zewnętrzną, GPIO14=LOW wewnętrzną; **D3 to GPIO21**, niezależny od GPIO3.
 
 ## Przyciski przez UART i USB-C
 
@@ -62,7 +62,7 @@ włączyć Permit join. Zwykłe komendy UART z 2.0.0 nadal działają bez zmian.
 komendę. Domyślnie oba porty mają logi wyłączone; po restarcie znów są wyłączone.
 Logi mają prefiks `#LOG `, a INFO/STATUS pokazują port i `logs_enabled`.
 Konwerter Z2M z wydania 2.0.0 pozostaje zgodny; klaster ustawień nie zmienił się.
-Poprawkę 2.1.1 wgrano na XIAO; ustawienia i bindingi pozostały zachowane.
+Warianty 2.1.2 mają ten sam układ partycji i konfiguracji; zmiana anteny nie wymaga resetu sieci.
 [Historia zmian](CHANGELOG.md) · [Zakres wykonanych testów](docs/VALIDATION.md).
 
 Podłącz TX urządzenia do D7/RX, RX do D6/TX i wspólną masę.
@@ -196,7 +196,7 @@ zgaszone, obie zapalone i zwolnienie przycisku podczas regulacji.
 
 ## Konwerter Z2M i aktualizacja z wersji czterokanałowej
 
-1. Wgraj samą aplikację 2.1.1 pod 0x10000, **bez erase_flash**. Układ partycji
+1. Wgraj samą aplikację 2.1.2 pod 0x10000, **bez erase_flash**. Układ partycji
    pozostaje bez zmian. Firmware migruje ustawienia input_mode/invert CH1–CH4,
    zachowuje sieć i bindingi. CH5–CH8 startują jako push/toggle.
 2. Zastąp poprzedni konwerter plikiem `zigbee2mqtt/xiao-c6-8ch.mjs`.
@@ -221,7 +221,15 @@ i `throttle: 0`. W Z2M wymagającym włączenia zewnętrznych konwerterów ustaw
 
 ## Wgranie obrazów
 
-Rozpakuj `dist/xiao-8ch-v2.1.1.zip`. W katalogu rozpakowanej paczki:
+Rozpakuj `dist/xiao-8ch-v2.1.2.zip`. Wybierz wariant odpowiadający antenie:
+
+| Antena | Aktualizacja (0x10000) | Czysta instalacja (0x0) |
+|---|---|---|
+| Zewnętrzna U.FL | `application-external.bin` | `firmware-factory-external.bin` |
+| Wewnętrzna | `application-internal.bin` | `firmware-factory-internal.bin` |
+
+Przykłady poniżej używają anteny zewnętrznej. Dla wewnętrznej zamień
+`external` na `internal` w nazwie pliku. W katalogu rozpakowanej paczki:
 
 ```sh
 python3 -m venv .venv
@@ -235,14 +243,14 @@ pierwszej, czystej instalacji:
 
 ```sh
 python -m esptool --chip esp32c6 --port PORT erase_flash
-python -m esptool --chip esp32c6 --port PORT write_flash 0x0 firmware-factory.bin
+python -m esptool --chip esp32c6 --port PORT write_flash 0x0 firmware-factory-external.bin
 ```
 
 `erase_flash` usuwa sieć, bindingi i wszystkie ustawienia. Do aktualizacji z 1.x
 lub kolejnej wersji z tym samym układem partycji użyj wyłącznie:
 
 ```sh
-python -m esptool --chip esp32c6 --port PORT write_flash 0x10000 application.bin
+python -m esptool --chip esp32c6 --port PORT write_flash 0x10000 application-external.bin
 ```
 
 Model/endpointy po takiej aktualizacji odśwież w Z2M przez interview, nie reset
@@ -319,35 +327,37 @@ aktywowanego przez `export.sh`.
 
 ### C. Pierwsza kompilacja po pobraniu lub czyszczeniu projektu
 
-Przejdź do katalogu `firmware` we własnej kopii projektu. Dla przykładowej
-lokalizacji `~/esp/xiao-4ch`:
+Przejdź do głównego katalogu własnej kopii projektu. Dla przykładowej
+lokalizacji `~/esp/xiao-8ch`:
 
 ```sh
-cd "$HOME/esp/xiao-8ch/firmware"
-idf.py set-target esp32c6
-idf.py build
+cd "$HOME/esp/xiao-8ch"
+python scripts/build_firmware.py
 ```
 
 Jeżeli projekt jest w innym miejscu, zmień pierwszą ścieżkę. Nie trzeba ręcznie
 instalować bibliotek Zigbee ani odtwarzać usuniętych plików. Component Manager
 pobiera `esp-zigbee-lib` i `esp-zboss-lib` **1.6.9** na podstawie
-`main/idf_component.yml` oraz `dependencies.lock`. Nie podmieniaj ich na SDK 2.x.
+`firmware/main/idf_component.yml` oraz `firmware/dependencies.lock`. Nie podmieniaj ich na SDK 2.x.
 
-Automatycznie powstaną `managed_components/`, `sdkconfig` i `build/`.
-Ustawienia początkowe pochodzą z `sdkconfig.defaults`: router Zigbee, ESP32-C6,
-4 MB flash, komendy przez UART/USB i domyślnie wyłączone logi. Zewnętrzna antena jest wybierana w `main/main.c`
-przez `EXTERNAL_ANTENNA=1`.
-
-Gotowe pliki:
+Skrypt zawsze kompiluje **oba warianty**. Powstaną `firmware/managed_components/`
+oraz osobne katalogi `firmware/build/external/` i `firmware/build/internal/`,
+każdy z własnym `sdkconfig`. Ustawienia początkowe pochodzą z
+`sdkconfig.defaults`: router Zigbee, ESP32-C6, 4 MB flash, UART/USB i wyłączone
+logi. CMake ustawia GPIO14 dla właściwej anteny; GPIO3 pozostaje LOW.
 
 | Plik względem `firmware/` | Zastosowanie |
 |---|---|
-| `build/xiao_zigbee_8ch.bin` | Sama aplikacja; adres 0x10000 |
-| `build/bootloader/bootloader.bin` | Bootloader; adres 0x0 |
-| `build/partition_table/partition-table.bin` | Tablica partycji; adres 0x8000 |
+| `build/external/xiao_zigbee_8ch.bin` | Aplikacja dla anteny zewnętrznej; 0x10000 |
+| `build/internal/xiao_zigbee_8ch.bin` | Aplikacja dla anteny wewnętrznej; 0x10000 |
+| `build/<wariant>/bootloader/bootloader.bin` | Bootloader; 0x0 |
+| `build/<wariant>/partition_table/partition-table.bin` | Tablica partycji; 0x8000 |
 
-Przy kolejnych zmianach kodu wystarczy `idf.py build`. Ponowne `set-target`
-nie jest potrzebne i może zresetować wygenerowane ustawienia projektu.
+Przy kolejnych zmianach uruchom ponownie `python scripts/build_firmware.py`.
+Nie zmieniaj ręcznie kodu ani `sdkconfig`, aby przełączać antenę. Bezpośrednie
+`idf.py build` jest kompilacją pojedynczego wariantu i wymaga jawnego
+`-D XIAO_ANTENNA=external` albo `internal`; bez wyboru konfiguracja zostanie
+odrzucona. Standardowy skrypt projektu zawsze buduje oba.
 
 ### D. Wgranie i sprawdzenie USB — osobny, opcjonalny krok
 
@@ -357,10 +367,12 @@ Sprawdź porty, będąc w aktywnym środowisku ESP-IDF:
 python -m serial.tools.list_ports -v
 ```
 
-Z katalogu `firmware` wgraj zbudowany projekt, podając prawdziwy port:
+Z głównego katalogu projektu wgraj wybrany wariant, podając prawdziwy port
+(przykład: antena zewnętrzna):
 
 ```sh
-idf.py -p PORT flash monitor
+cd firmware
+idf.py -B build/external -p PORT flash monitor
 ```
 
 Na macOS XIAO zwykle ma port `/dev/cu.usbmodem...`; na Windows np. `COM5`.
@@ -375,7 +387,7 @@ starego bootloadera podczas restartu nie podlegają LOG.
 `idf.py flash` zapisuje osobne obrazy pod ich adresami; przy niezmienionym układzie
 partycji nie kasuje ustawień ani bindingów. Jeśli poprzedni firmware używał innego
 układu partycji i potrzebna jest czysta instalacja, przed wgrywaniem wykonaj
-`idf.py -p PORT erase-flash` — **to usuwa wszystkie ustawienia i sieć**.
+`idf.py -B build/external -p PORT erase-flash` — **to usuwa wszystkie ustawienia i sieć**.
 
 ## Testy konwertera i logiki wejść — opcjonalnie
 
@@ -399,17 +411,22 @@ kodowania/dekodowania ramek ZCL. Testy C sprawdzają wejścia i obsługę bindin
 
 ## Pakowanie wydania
 
-Po udanym `idf.py build`, w aktywnym środowisku ESP-IDF i nadal w katalogu
-`firmware`, uruchom:
+W aktywnym środowisku ESP-IDF, z głównego katalogu projektu uruchom:
 
 ```sh
-python ../scripts/package_release.py --idf-path "$IDF_PATH"
+python scripts/package_release.py --idf-path "$IDF_PATH"
 ```
 
-Skrypt używa programu esptool zainstalowanego razem z ESP-IDF; nie wymaga
-ręcznego kopiowania obrazów. Utworzy `dist/xiao-8ch-v2.1.1.zip` w głównym
+Skrypt najpierw kompiluje oba warianty (również przyrostowo), a potem używa
+programu esptool zainstalowanego razem z ESP-IDF; nie wymaga
+ręcznego kopiowania obrazów. Utworzy `dist/xiao-8ch-v2.1.2.zip` w głównym
 katalogu projektu i usunie swoje pliki tymczasowe. ZIP zawiera obrazy do wgrania,
-źródła, konwerter, dokumentację, licencje i sumy kontrolne.
+źródła, konwerter, dokumentację, licencje i sumy kontrolne. Obok ZIP powstaną
+cztery obrazy z nazwami anten, konwerter, `manifest.json` i `SHA256SUMS` do
+publikacji w release. Manifest opisuje antenę, adres i SHA256 każdego obrazu.
+Brak kompilacji któregokolwiek wariantu przerywa pakowanie. GitHub Actions
+wykonuje ten sam proces dla main, pull requestów i tagów; artefakt
+`xiao-both-antennas` zawiera oba warianty.
 
 Po zakończeniu pracy można ponownie usunąć wygenerowane `firmware/build/`,
 `firmware/managed_components/`, `firmware/sdkconfig`, `firmware/sdkconfig.old`

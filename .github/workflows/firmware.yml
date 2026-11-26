@@ -1,0 +1,33 @@
+name: Both antenna variants
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.4.2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and package external and internal antenna firmware
+        shell: bash
+        run: |
+          . /opt/esp/idf/export.sh
+          python scripts/package_release.py --idf-path "$IDF_PATH"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xiao-both-antennas
+          if-no-files-found: error
+          path: |
+            dist/application-external.bin
+            dist/application-internal.bin
+            dist/firmware-factory-external.bin
+            dist/firmware-factory-internal.bin
+            dist/xiao-8ch-v*.zip
+            dist/xiao-c6-8ch.mjs
+            dist/manifest.json
+            dist/SHA256SUMS

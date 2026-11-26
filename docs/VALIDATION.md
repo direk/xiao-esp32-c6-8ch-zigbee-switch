@@ -134,3 +134,17 @@ maski bindingów: CH1=2 (Level), CH2=1 (On/Off), pozostałe 0. CH2 zachował
 rocker/toggle oraz binding_priority=ON. Nie wysyłano komend sterujących lampami
 ani RESET; rzeczywiste przestawienie styku i zachowanie lampy wymagają próby
 użytkownika. Test regresyjny ramek potwierdza Toggle na obu zboczach.
+
+## Dwa warianty anteny 2.1.2 — 26 listopada 2026
+
+- Pełna kompilacja external i internal od zera przez package_release.py w nowej
+  instalacji ESP-IDF 5.4.2 / Zigbee SDK 1.6.9 zakończyła się powodzeniem.
+- Osobne katalogi build i sdkconfig; compile_commands.json potwierdza
+  XIAO_EXTERNAL_ANTENNA=1 dla external i =0 dla internal. GPIO3 pozostaje LOW,
+  a ta stała określa poziom GPIO14.
+- Obie aplikacje mają wersję 2.1.2, różne SHA256 i identyczną tablicę partycji.
+- Sprawdzono obrazy aplikacji i fabryczne dla obu anten, manifest, sumy
+  kontrolne załączników i każdego pliku wewnątrz ZIP oraz zgodność źródeł.
+- Pakowanie ponownie uruchamia obie kompilacje; GitHub Actions używa tego
+  samego skryptu. Brak poprawnej kompilacji wariantu przerywa proces.
+- Nie wgrywano wersji 2.1.2 na XIAO i nie testowano obu anten radiowo.

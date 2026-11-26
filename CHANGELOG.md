@@ -1,5 +1,15 @@
 # Historia zmian
 
+## 2.1.2 — 26 listopada 2026
+
+- Standardowy skrypt budowania i pakowanie zawsze kompilują warianty external
+  i internal w osobnych katalogach z niezależną konfiguracją.
+- Osobne application-external.bin / application-internal.bin oraz obrazy
+  firmware-factory-external.bin / firmware-factory-internal.bin.
+- Manifest podaje antenę, adres flash i sumę kontrolną każdego obrazu.
+- Wybór anteny przez CMake, bez ręcznych zmian źródeł; konfiguracja kanałów,
+  bindingi i układ partycji pozostają zgodne.
+
 ## 2.1.1 — 24 listopada 2026
 
 - Naprawa rocker + toggle: każda stabilna zmiana styku wysyła genOnOff Toggle

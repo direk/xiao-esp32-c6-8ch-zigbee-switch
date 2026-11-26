@@ -33,7 +33,9 @@
 #define ATTR_BINDING_STATUS 0x0013
 #define ATTR_EVENT 0x0020
 #define COORDINATOR_EP 1
-#define EXTERNAL_ANTENNA 1
+#ifndef XIAO_EXTERNAL_ANTENNA
+#error "Antenna selection must be supplied by CMake"
+#endif
 
 // XIAO D0..D5, D8/D9. UART D6/D7 (GPIO16/17) handles serial commands.
 // USB (GPIO12/13), antenna (3/14) and BOOT (9) remain separate.
@@ -465,8 +467,8 @@ void app_main(void) {
     gpio_config_t output = {.pin_bit_mask = (1ULL << 3) | (1ULL << 14), .mode = GPIO_MODE_INPUT_OUTPUT};
     ESP_ERROR_CHECK(gpio_config(&output));
     gpio_set_level(GPIO_NUM_3, 0); // Enable RF switch on XIAO.
-    gpio_set_level(GPIO_NUM_14, EXTERNAL_ANTENNA);
-    ESP_LOGI(TAG, "Antenna: %s (RF enable=%d, select=%d)", EXTERNAL_ANTENNA ? "external" : "internal",
+    gpio_set_level(GPIO_NUM_14, XIAO_EXTERNAL_ANTENNA);
+    ESP_LOGI(TAG, "Antenna: %s (RF enable=%d, select=%d)", XIAO_EXTERNAL_ANTENNA ? "external" : "internal",
              gpio_get_level(GPIO_NUM_3), gpio_get_level(GPIO_NUM_14));
     uint64_t input_mask=1ULL<<9; // BOOT plus the eight channel pins.
     for(unsigned i=0;i<CHANNELS;++i)input_mask |= 1ULL<<pins[i];
