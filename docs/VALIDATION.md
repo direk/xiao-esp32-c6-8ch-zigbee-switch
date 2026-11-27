@@ -340,3 +340,16 @@ przypiętej biblioteki 1.6.9 potwierdziła stały krok 21 bajtów, także dla
   który nie zmienia widoczności przed potwierdzeniem przez urządzenie.
 - Firmware i pliki OTA bez zmian; niczego nie opublikowano ani nie wgrano.
   Sprawdzenie w panelu działającego Z2M pozostaje do wykonania.
+
+
+### Przygotowanie wydania 2.3.1
+
+- Lokalne testy z rzeczywistymi obrazami OTA: 29/29, bez pominięć;
+  9 natywnych zestawów testów logiki firmware’u zaliczonych.
+- Kompilacja obu anten i weryfikacja paczki: zgodność źródeł/dokumentacji,
+  konwerter 0.1.2, wewnętrzne/zewnętrzne sumy SHA256 i niezależne dekodowanie OTA.
+- Pierwsze uruchomienie CI ujawniło różnicę GCC/Clang w ostrzeżeniu sign-compare
+  dla indeksu endpointu w callbacku. Porównanie ma teraz jawny typ unsigned;
+  nie zmienia to zakresu ani zachowania, bo endpoint jest wcześniej walidowany.
+- Pełny test sprzętowy funkcji i panelu dynamicznych pól pozostaje odrębny od
+  testów programowych; manifest nie deklaruje go jako wykonanego.

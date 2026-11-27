@@ -293,7 +293,7 @@ static void apply_attribute(void *context) {
         }
         for(unsigned i=0;i<ENDPOINTS;++i) {
             uint8_t source=cfg.channels[i].input_source;
-            if((!pin_setting && i==ep-1) || (source && (affected & (1U<<(source-1))))) {
+            if((!pin_setting && i==(unsigned)ep-1U) || (source && (affected & (1U<<(source-1))))) {
                 command_t command;if(button_cancel(&inputs[i],&command))dispatch(i,&command);
                 serial_endpoint_cancel(&serial_input,i);input_router.endpoints[i]=(routed_button_t){0};rebase[i]=true;
             }
