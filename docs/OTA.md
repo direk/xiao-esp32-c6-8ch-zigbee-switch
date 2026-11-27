@@ -182,3 +182,17 @@ CLICK EP24/GET EP24/STATUS EP24 przez UART i USB, RELEASE ALL oraz zapis po
 restarcie. Nowe EP mają source=none po migracji. Dotychczasowe EP1..8 zachowują
 bindingi i konfigurację. Tabela ma 96 miejsc; nie są to 96 miejsca per endpoint.
 Nie przełączaj anteny przez OTA; dobór imageType działa tak jak w 2.2.x.
+
+
+## Wydanie 2.3.1 — poprawka timeoutu zapisu ustawień
+
+Pliki w wydaniu: `xiao-8ch-v2.3.1-external.zigbee` oraz
+`xiao-8ch-v2.3.1-internal.zigbee`. Publiczny `ota/index.json` zawiera oba
+warianty; Z2M wybiera zgodny imageType. OTA fileVersion=0x02030100.
+Dołączony konwerter 0.1.2 ukrywa nieużywane pola konfiguracji — po podmianie
+zrestartuj Z2M i wykonaj Reconfigure. Nie zmienia się
+schema endpointów ani NVS; nie trzeba usuwać urządzenia ani bindingów.
+Po aktualizacji odczytaj input_source/pin_mode i zapisz input_gesture:
+legacy→single, następnie zmień kolejne ustawienie, sprawdzając brak timeoutu,
+stabilność programu i zachowanie wartości po restarcie. Reguły współdzielenia
+pinów (push dla gestów, zakaz mieszania legacy/decoded) nadal obowiązują.

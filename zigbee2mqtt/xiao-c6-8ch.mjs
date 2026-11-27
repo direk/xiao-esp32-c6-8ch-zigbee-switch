@@ -30,6 +30,52 @@ const fields = [
     ['scene_list', 'sceneList', 15, 0x42, []],
     ['binding_priority', 'bindingPriority', 14, 0x10, ['OFF', 'ON']],
 ];
+// Attribute caches are persisted by herdsman; no extra device configuration is stored here.
+// Unknown settings stay visible until the first read, rather than hiding a usable control.
+const conditionalFields = {
+    min_level: ['brightness_level', 'brightness_level_up', 'brightness_level_down',
+        'brightness_level_no_onoff', 'brightness_level_up_no_onoff', 'brightness_level_down_no_onoff'],
+    max_level: ['brightness_level', 'brightness_level_up', 'brightness_level_down',
+        'brightness_level_no_onoff', 'brightness_level_up_no_onoff', 'brightness_level_down_no_onoff'],
+    color_temp_min: ['move_to_color_temperature', 'move_to_color_temperature_up', 'move_to_color_temperature_down'],
+    color_temp_max: ['move_to_color_temperature', 'move_to_color_temperature_up', 'move_to_color_temperature_down'],
+    transition_time: ['brightness_level', 'brightness_level_up', 'brightness_level_down',
+        'brightness_level_no_onoff', 'brightness_level_up_no_onoff', 'brightness_level_down_no_onoff',
+        'move_to_color_temperature', 'move_to_color_temperature_up', 'move_to_color_temperature_down'],
+    scene_id: ['scene'],
+    group_id: ['scene', 'scene_cycle'],
+    scene_list: ['scene_cycle'],
+    switch_actions: ['toggle', 'momentary'],
+};
+const endpointVisibility = new WeakMap();
+function fieldVisible(key, endpoint) {
+    if (!conditionalFields[key]) return true;
+    const type = endpoint?.getClusterAttributeValue?.(cluster, 'switchType');
+    if (key === 'switch_actions' && endpoint?.getClusterAttributeValue?.(cluster, 'inputMode') === 1) return false;
+    return type === undefined || conditionalFields[key].includes(modes[type]);
+}
+function visibilitySignature(endpoint) {
+    return Object.keys(conditionalFields).map((key) => Number(fieldVisible(key, endpoint))).join('');
+}
+function endpointFields(endpoint) {
+    if (endpoint) endpointVisibility.set(endpoint, visibilitySignature(endpoint));
+    return fields.filter(([key]) => fieldVisible(key, endpoint));
+}
+function updateFieldVisibility(endpoint, data, meta) {
+    if (data.inputMode === undefined && data.switchType === undefined) return;
+    const before = endpointVisibility.get(endpoint) ?? '1'.repeat(Object.keys(conditionalFields).length);
+    // Also supports callers which have not yet populated the herdsman attribute cache.
+    endpoint.saveClusterAttributeKeyValue?.(cluster, data);
+    const after = visibilitySignature(endpoint);
+    endpointVisibility.set(endpoint, after);
+    if (before !== after) meta?.deviceExposesChanged?.();
+}
+async function readInputModes(device) {
+    // Physical mode is shared by all endpoints mapped to a pin. Read back aliases
+    // after a mode write, including endpoints whose mappings are not cached yet.
+    for (const endpoint of device.endpoints.filter((ep) => ep.ID >= 1 && ep.ID <= 24))
+        await endpoint.read(cluster, ['inputMode']);
+}
 const resetReasons=['unknown','power_on','external','software','panic','interrupt_watchdog',
     'task_watchdog','watchdog','deep_sleep','brownout','sdio','usb','jtag','efuse','power_glitch','cpu_lockup'];
 const diagnostics=[['uptime','uptimeSeconds',0x30,0x23],['reset_reason','resetReason',0x31,0x20],
@@ -47,6 +93,7 @@ const pinSettings=pinNames.flatMap((pin,index)=>pinFields.map(([property,attr,,t
         else if(!Number.isInteger(value) || value<values[0] || value>values[1])throw new Error('Invalid pin timing');
         const endpoint=meta.device.getEndpoint(index+1);
         await endpoint.write(cluster,{[attr]:encoded},{disableDefaultResponse:false});await endpoint.read(cluster,[attr]);
+        if (attr === 'pinMode') await readInputModes(meta.device);
         return {state:{[key]:value}};
     },
     convertGet:async(entity,key,meta)=>{await meta.device.getEndpoint(index+1).read(cluster,[attr]);},
@@ -65,7 +112,7 @@ const customCluster = deviceAddCustomCluster(cluster, {
 });
 const settings = fields.map(([key, attr, , type, values]) => ({
     key: [key],
-    convertSet: async (entity, property, value) => {
+    convertSet: async (entity, property, value, meta) => {
         if (!entity || entity.ID < 1 || entity.ID > 24) throw new Error('Expected channel endpoint 1..24');
         let encoded;
         if(type === 0x42) {
@@ -90,7 +137,8 @@ const settings = fields.map(([key, attr, , type, values]) => ({
             encoded = value;
         }
         await entity.write(cluster, {[attr]: encoded}, {disableDefaultResponse: false});
-        await entity.read(cluster, [attr]);
+        if (attr === 'inputMode' && meta?.device) await readInputModes(meta.device);
+        else await entity.read(cluster, attr === 'inputSource' ? [attr, 'inputMode'] : [attr]);
         return {state: {[key]: value}};
     },
     convertGet: async (entity) => { await entity.read(cluster, [attr]); },
@@ -98,10 +146,11 @@ const settings = fields.map(([key, attr, , type, values]) => ({
 const seenEvents = new WeakMap();
 const received = {
     cluster, type: ['attributeReport', 'readResponse'],
-    convert: (model, msg) => {
+    convert: (model, msg, publish, options, meta) => {
         const ep = msg.endpoint.ID;
         if (ep < 1 || ep > 24) return;
         const out = {}, data = msg.data;
+        updateFieldVisibility(msg.endpoint, data, meta);
         for (const [key, attr, , , values] of fields) {
             if (data[attr] === undefined) continue;
             out[`${key}_ch${ep}`] = key === 'invert' ? Boolean(data[attr]) :
@@ -143,7 +192,7 @@ const descriptions = {
     input_gesture: 'legacy preserves raw-contact behavior. single/double activate this endpoint once; hold activates until release. A pin cannot mix legacy and decoded mappings. Set the original endpoint to single before adding double/hold mappings.',
     input_mode: 'Physical input. rocker+toggle sends Toggle on both edges; rocker+momentary follows closed=ON/open=OFF. Advanced modes require push.',
     switch_type: 'Per-channel logical function. Brightness-only modes never send On/Off.',
-    switch_actions: 'Push toggle/momentary: off, on, toggle, or on_off (alternating explicit On/Off, first On after reboot or writing this option). Unrelated settings retain the sequence. Momentary alternates on press and release. Rocker ignores this setting.',
+    switch_actions: 'Push toggle/momentary: off, on, toggle, or on_off (alternating explicit On/Off, first On after reboot or writing this option). Unrelated settings retain the sequence. Momentary alternates on press and release. Visible only for push with toggle/momentary; other types ignore this setting.',
     transition_time: 'Transition duration in 0.1 seconds; default 25 = 2.5 seconds.',
     binding_priority: 'Default ON: direct binding suppresses action. OFF: direct control also sends action. Saved on device.',
     group_id: 'Direct Zigbee scene group; scene_cycle requires 1..65527. In scene mode, 0 uses Scenes bindings.',
@@ -153,7 +202,7 @@ export default {
     zigbeeModel: ['XIAO-C6-8CH', 'XIAO-C6-4CH-FAIL1'],
     model: 'XIAO-C6-8CH', vendor: 'DIY-XIAO',
     description: 'Eight-input / 24-endpoint mains-powered Zigbee switch/dimmer/scene controller with Zigbee OTA and two antenna variants',
-    version: '0.1.0',
+    version: '0.1.2',
     ota: {modelId: 'XIAO-C6-8CH', manufacturerName: 'DIY-XIAO'},
     extend: [customCluster, identify(), {isModernExtend: true, configure: [async (device) => {
         for (const ep of device.endpoints.filter((x) => x.ID >= 1 && x.ID <= 24)) {
@@ -170,7 +219,7 @@ export default {
     }]}],
     endpoint: () => Object.fromEntries(channels.map((name, i) => [name, i + 1])),
     meta: {multiEndpoint: true}, fromZigbee: [received,diagnosticReports], toZigbee: [...settings,...pinSettings,diagnosticSettings],
-    exposes: [
+    exposes: (device) => [
         ...pinNames.flatMap((pin)=>pinFields.map(([key,,,type,values])=>{
             const name=`${key}_${pin}`;
             const expose=type===0x10?e.binary(name,ea.ALL,true,false):typeof values[0]==='string'?e.enum(name,ea.ALL,values):
@@ -185,7 +234,7 @@ export default {
             .withDescription('Direct-control APS requests rejected locally since boot. Does not measure lamp delivery or group acknowledgements.'),
         e.action(channels.flatMap((ch) => actions.map((action) => `${ch}_${action}`))),
         ...channels.flatMap((ch) => [
-            ...fields.map(([key, , , type, values]) => {
+            ...endpointFields(device?.getEndpoint?.(Number(ch.slice(2)))).map(([key, , , type, values]) => {
                 const expose = type===0x42 ? e.text(key,ea.ALL) : key === 'binding_priority' ? e.binary(key, ea.ALL, 'ON', 'OFF') :
                     key === 'invert' ? e.binary(key, ea.ALL, true, false) :
                     typeof values[0] === 'string' ? e.enum(key, ea.ALL, values) :

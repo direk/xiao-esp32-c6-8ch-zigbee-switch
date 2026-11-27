@@ -1,5 +1,31 @@
 # Historia zmian
 
+## 2.3.1 — 27 listopada 2026
+
+- Konwerter 0.1.2: dynamiczna widoczność min/max level, temperatury barwowej,
+  transition_time, scene_id, group_id i scene_list według switch_type, osobno
+  dla 24 endpointów. Zachowanie ukrytych wartości i stała dostępność ustawień
+  źródła/gestu/typu/binding priority. Ukrywanie realizuje sam konwerter.
+
+- Naprawa rekurencji custom write hook przy zapisie input_gesture i innych
+  ustawień. ZBOSS wywołuje hook również przy set_attribute_val(check=false),
+  więc synchronizacja aliasów ponownie uruchamiała zapis konfiguracji.
+- Guard całej operacji blokuje zagnieżdżone skutki uboczne i chroni candidate
+  przed zastąpieniem przez wewnętrzne sprawdzanie wartości. SDK nadal aktualizuje
+  własne dane atrybutów; następny zewnętrzny zapis jest obsługiwany normalnie.
+- Test odtwarza 80 aktualizacji aliasów z ponownym wywołaniem hooka, sprawdza
+  pojedyncze zastosowanie ustawienia oraz zwolnienie guardu dla następnego zapisu.
+- Bez zmiany NVS, protokołu ani endpointów.
+- Konwerter 0.1.1: dynamiczne `switch_actions` — pole widoczne wyłącznie dla
+  push + toggle/momentary, niezależnie dla 24 endpointów. Zmiana widoczności po
+  odczycie konfiguracji, bez kasowania ustawienia. Odczyt aliasów input_mode
+  po zmianie trybu fizycznego pinu oraz efektywnego trybu po zmianie input_source.
+
+- Uzupełniona dokumentacja UART/USB: @ID, ponawianie, cache odpowiedzi i błędów,
+  restarty XIAO/kontrolera oraz niezależne sesje portów.
+- Obrazy aplikacji, obrazy fabryczne USB i aktualizacje Zigbee OTA dla obu anten,
+  konwerter 0.1.2 oraz komplet źródeł i dokumentacji w paczce wydania.
+
 ## 2.3.0 — 27 listopada 2026
 
 - 24 endpointy źródłowe, niezależne konfiguracje/binding priority/sceny,

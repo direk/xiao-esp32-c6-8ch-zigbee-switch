@@ -43,6 +43,9 @@ function fixture() {
     const customClusters = {};
     const endpoints = Array.from({length: 24}, (_, i) => ({
         ID: i + 1,
+        attributes: {},
+        saveClusterAttributeKeyValue(cluster, values) { Object.assign(this.attributes, values); },
+        getClusterAttributeValue(cluster, name) { return this.attributes[name]; },
         write: async (cluster, values, options) => {
             const schema = Zcl.Utils.getCluster(cluster, undefined, customClusters);
             const payload = Object.entries(values).map(([name, attrData]) => {
@@ -85,7 +88,7 @@ test('real Z2M definition prepares and registers schema before configuration rea
     assert.equal(calls[0].kind, 'cluster');
     assert.deepEqual([...new Set(calls.filter((x) => x.kind === 'read').map((x) => x.ep))], Array.from({length:24},(_,i)=>i+1));
     assert.deepEqual(definition.endpoint(device), Object.fromEntries(Array.from({length:24},(_,i)=>[`ch${i+1}`,i+1])));
-    assert.equal(definition.exposes.find((x) => x.name === 'action').values.length, 456);
+    assert.equal(definition.exposes(undefined, {}).find((x) => x.name === 'action').values.length, 456);
 });
 
 test('each setting reaches only its channel, with real Zigbee attribute encoding', async () => {
@@ -113,7 +116,7 @@ test('removed heartbeat stays absent with global device diagnostics', async () =
     const schema = device.customClusters.xiaoControl;
     for (const name of ['heartbeat', 'timeout', 'challenge', 'route']) assert.equal(schema.attributes[name], undefined);
     for (const name of ['heartbeat', 'heartbeat_challenge', 'fallback_timeout', 'z2m_online']) {
-        assert.ok(!definition.exposes.some((e) => e.name === name));
+        assert.ok(!definition.exposes(undefined, {}).some((e) => e.name === name));
     }
     assert.equal(definition.fromZigbee.length, 2);
     await assert.rejects(tz.convertSet(null, 'input_mode_ch1', 'switch', meta));
@@ -130,7 +133,7 @@ test('Z2M dispatch preserves multiple settings on each channel and publishes no 
     assert.deepEqual(writes.map((x) => x.ep), [1, 1, 2, 2]);
     assert.deepEqual(writes.map((x) => x.parsed[0].attrId), [1, 2, 1, 2]);
     for (let i = 1; i <= 8; ++i) {
-        const expose = definition.exposes.find((x) => x.property === `input_mode_ch${i}`);
+        const expose = definition.exposes(undefined, {}).find((x) => x.property === `input_mode_ch${i}`);
         assert.equal(expose.name, 'input_mode');
         assert.equal(expose.endpoint, `ch${i}`);
     }
@@ -190,7 +193,7 @@ test('independent binding and route diagnostics decode on all eight endpoints', 
 test('all fourteen mode IDs and uint16 settings encode correctly on eight endpoints', async () => {
     const {device, calls, meta} = fixture();
     await definition.configure(device, {}, definition);
-    const modes = definition.exposes.find((e) => e.property === 'switch_type_ch1').values;
+    const modes = definition.exposes(undefined, {}).find((e) => e.property === 'switch_type_ch1').values;
     assert.equal(modes.length, 14);
     for (let ep = 1; ep <= 8; ++ep) {
         for (let mode = 0; mode < modes.length; ++mode) {
@@ -257,7 +260,7 @@ test('production C gesture frames decode as standard Level/Color/Scene commands 
 });
 
 test('all 152 channel/action combinations publish the matching gesture or lighting action', () => {
-    const values=definition.exposes.find((e)=>e.name==='action').values;
+    const values=definition.exposes(undefined, {}).find((e)=>e.name==='action').values;
     for(let ep=1;ep<=8;++ep){
         const endpoint={ID:ep},names=values.filter((name)=>name.startsWith(`ch${ep}_`));
         assert.equal(names.length,19);
@@ -273,7 +276,7 @@ test('binding priority is independently writable/readable on all eight endpoints
     await definition.configure(device, {}, definition);
     for (let ep = 1; ep <= 8; ++ep) {
         assert.ok(calls.some((x) => x.kind === 'read' && x.ep === ep && x.attributes.includes('bindingPriority')));
-        const expose = definition.exposes.find((x) => x.property === `binding_priority_ch${ep}`);
+        const expose = definition.exposes(undefined, {}).find((x) => x.property === `binding_priority_ch${ep}`);
         assert.equal(expose.value_on, 'ON');
         assert.equal(expose.value_off, 'OFF');
         for (const [value, encoded] of [['ON', 1], ['OFF', 0]]) {
@@ -301,7 +304,7 @@ test('on_off setting encodes and reads back on every endpoint without a new acti
     const {device,calls,meta}=fixture();await definition.configure(device,{},definition);
     for(let ep=1;ep<=8;++ep) {
         const key=`switch_actions_ch${ep}`;
-        assert.deepEqual(definition.exposes.find((x)=>x.property===key).values,['off','on','toggle','on_off']);
+        assert.deepEqual(definition.exposes(undefined, {}).find((x)=>x.property===key).values,['off','on','toggle','on_off']);
         await tz.convertSet(null,key,'on_off',meta);
         const write=calls.findLast((x)=>x.kind==='write');
         assert.equal(write.ep,ep);
@@ -318,7 +321,7 @@ test('scene_cycle and text lists write/read independently on eight endpoints wit
         await tz.convertSet(null,`switch_type_ch${ep}`,'scene_cycle',meta);
         assert.equal(calls.findLast((x)=>x.kind==='write').parsed[0].attrData,13);
         const key=`scene_list_ch${ep}`;
-        assert.equal(definition.exposes.find((x)=>x.property===key).type,'text');
+        assert.equal(definition.exposes(undefined, {}).find((x)=>x.property===key).type,'text');
         const result=await tz.convertSet(null,key,' 3, 0, 001 ',meta);
         assert.deepEqual(result,{state:{[key]:'3,0,1'}});
         const write=calls.findLast((x)=>x.kind==='write');assert.equal(write.ep,ep);
@@ -359,7 +362,7 @@ test('global diagnostics use standard resets plus read-only custom attributes on
     }
     assert.equal(fz.convert(definition,{endpoint:device.getEndpoint(2),type:'readResponse',data:{resetReason:9}}),undefined);
     for(const key of ['number_of_resets','uptime','reset_reason','zigbee_tx_request_errors']) {
-        const expose=definition.exposes.find((x)=>x.property===key);
+        const expose=definition.exposes(undefined, {}).find((x)=>x.property===key);
         assert.ok(expose && expose.access===5 && !expose.endpoint);
         await tz.convertGet(null,key,meta);assert.equal(calls.at(-1).ep,1);
     }
@@ -378,9 +381,9 @@ test('24 endpoints expose independent source/gesture/function/bindings with unch
         }
         assert.deepEqual(fz.convert(definition,{endpoint:device.getEndpoint(ep),type:'readResponse',data:{inputSource:8,inputGesture:3}}),
             {[`input_source_ch${ep}`]:'D9',[`input_gesture_ch${ep}`]:'hold'});
-        assert.equal(definition.exposes.find((e)=>e.property===`input_source_ch${ep}`).values.includes('D6'),false);
+        assert.equal(definition.exposes(undefined, {}).find((e)=>e.property===`input_source_ch${ep}`).values.includes('D6'),false);
     }
-    assert.equal(definition.exposes.find((e)=>e.name==='action').values.length,456);
+    assert.equal(definition.exposes(undefined, {}).find((e)=>e.name==='action').values.length,456);
     for(let ep=9;ep<=24;++ep)assert.deepEqual(fz.convert(definition,{endpoint:device.getEndpoint(ep),type:'attributeReport',data:{event:0x123402}}),{action:`ch${ep}_toggle`});
     const pins=['d0','d1','d2','d3','d4','d5','d8','d9'];
     for(let i=0;i<8;++i) {
@@ -391,4 +394,121 @@ test('24 endpoints expose independent source/gesture/function/bindings with unch
         assert.deepEqual(fz.convert(definition,{endpoint:device.getEndpoint(i+1),type:'readResponse',data:{pinMode:0,pinInvert:true,pinHoldTime:1200,pinMultiTime:300}}),
             {[`pin_mode_${pins[i]}`]:'push',[`pin_invert_${pins[i]}`]:true,[`pin_hold_time_${pins[i]}`]:1200,[`pin_multi_click_time_${pins[i]}`]:300});
     }
+});
+
+test('switch_actions visibility follows mode/type independently on all 24 endpoints', () => {
+    const {device} = fixture();
+    const visible = (ep) => definition.exposes(device, {}).some((x) => x.property === `switch_actions_ch${ep}`);
+    const modes = definition.exposes(undefined, {}).find((x) => x.property === 'switch_type_ch1').values;
+    let changes = 0;
+    const meta = {device, deviceExposesChanged: () => { ++changes; }};
+    const report = (ep, data, type = 'attributeReport') => {
+        const endpoint = device.getEndpoint(ep);
+        // The real controller updates the attribute cache BEFORE invoking converters.
+        endpoint.saveClusterAttributeKeyValue('xiaoControl', data);
+        return fz.convert(definition, {endpoint, type, data}, undefined, {}, meta);
+    };
+    assert.ok(Array.from({length:24}, (_,i) => visible(i+1)).every(Boolean));
+    for (let ep = 1; ep <= 24; ++ep) {
+        for (let type = 0; type < modes.length; ++type) {
+            const before = visible(ep), count = changes;
+            report(ep, {inputMode: 0, switchType: type}, 'readResponse');
+            const expected = type <= 1;
+            assert.equal(visible(ep), expected, `EP${ep} push/${modes[type]}`);
+            assert.ok(changes-count >= Number(before !== expected), 'refresh whenever action visibility changes');
+            const unchanged = changes;
+            report(ep, {inputMode: 0, switchType: type});
+            report(ep, {switchAction: 2});
+            assert.equal(changes, unchanged, 'no refresh for repeated settings or unrelated attributes');
+        }
+        report(ep, {switchType: 0});
+        assert.equal(visible(ep), true);
+        report(ep, {inputMode: 1});
+        assert.equal(visible(ep), false, 'rocker ignores actions even with toggle');
+        report(ep, {switchType: 1});
+        assert.equal(visible(ep), false, 'rocker ignores actions even with momentary');
+        report(ep, {inputMode: 0});
+        assert.equal(visible(ep), true);
+        if (ep < 24) assert.equal(visible(ep+1), true, 'other endpoint unaffected');
+    }
+});
+
+test('cached settings determine exposes after restart; partial reads and notifications restore the field', () => {
+    const {device} = fixture();
+    const ep = device.getEndpoint(1);
+    ep.saveClusterAttributeKeyValue('xiaoControl', {switchType:13, inputMode:0});
+    const has = () => definition.exposes(device, {}).some((x) => x.property === 'switch_actions_ch1');
+    assert.equal(has(), false, 'persisted scene_cycle cache hides field before any new message');
+    let changes = 0;
+    const meta = {device, deviceExposesChanged: () => { ++changes; assert.equal(has(), true); }};
+    const result = fz.convert(definition, {endpoint:ep, type:'readResponse', data:{switchType:1}}, undefined, {}, meta);
+    assert.deepEqual(result, {switch_type_ch1:'momentary'});
+    assert.equal(changes, 1);
+    assert.equal(ep.getClusterAttributeValue('xiaoControl','inputMode'), 0, 'partial response retains input mode');
+});
+
+test('changing shared pin mode reads all endpoint aliases; remapping reads the new effective mode', async () => {
+    const {device,calls,meta} = fixture();
+    await definition.configure(device,{},definition);
+    calls.length = 0;
+    await dispatch({pin_mode_d0:'rocker'},meta);
+    assert.deepEqual(calls.filter((x)=>x.kind==='read' && x.attributes.length===1 && x.attributes[0]==='inputMode').map((x)=>x.ep),
+        Array.from({length:24},(_,i)=>i+1));
+    calls.length = 0;
+    await dispatch({input_source_ch24:'D1'},meta);
+    assert.deepEqual(calls.at(-1),{kind:'read',ep:24,attributes:['inputSource','inputMode']});
+});
+
+test('all conditional fields follow the complete mode matrix on 24 independent endpoints', () => {
+    const {device} = fixture();
+    const expectedTypes = {
+        switch_actions:[0,1], min_level:[3,4,5,10,11,12], max_level:[3,4,5,10,11,12],
+        color_temp_min:[6,7,8], color_temp_max:[6,7,8], transition_time:[3,4,5,6,7,8,10,11,12],
+        scene_id:[9], group_id:[9,13], scene_list:[13],
+    };
+    const always = ['input_source','input_gesture','input_mode','invert','switch_type','binding_priority'];
+    const properties = () => new Set(definition.exposes(device, {}).map((x)=>x.property));
+    const signature = (set, ep) => Object.keys(expectedTypes).map((key)=>Number(set.has(`${key}_ch${ep}`))).join('');
+    let notifications = 0;
+    const meta = {device, deviceExposesChanged:()=>{++notifications;}};
+    for (let ep = 1; ep <= 24; ++ep) {
+        const endpoint = device.getEndpoint(ep);
+        for (let type = 0; type < 14; ++type) {
+            const before = properties(), count = notifications;
+            // Simulate the real receive pipeline, which updates cache first.
+            const data = {inputMode:0, switchType:type};
+            endpoint.saveClusterAttributeKeyValue('xiaoControl',data);
+            fz.convert(definition,{endpoint,type:'readResponse',data},undefined,{},meta);
+            const after = properties();
+            for (const [key,types] of Object.entries(expectedTypes))
+                assert.equal(after.has(`${key}_ch${ep}`),types.includes(type),`${key} EP${ep} mode ${type}`);
+            for (const key of always) assert.ok(after.has(`${key}_ch${ep}`));
+            assert.equal(notifications-count, Number(signature(before,ep)!==signature(after,ep)));
+            for (let other = 1; other <= 24; ++other)
+                if (other!==ep) assert.equal(signature(before,other),signature(after,other));
+            const unchanged = notifications;
+            fz.convert(definition,{endpoint,type:'attributeReport',data},undefined,{},meta);
+            assert.equal(notifications, unchanged);
+        }
+    }
+});
+
+test('hiding fields preserves cached values and failed type writes do not change visibility', async () => {
+    const {device,meta} = fixture();
+    await definition.configure(device,{},definition);
+    const endpoint = device.getEndpoint(24);
+    const saved = {minLevel:17,maxLevel:201,sceneId:3,sceneGroup:42,sceneList:'0,1,3',switchAction:3};
+    endpoint.saveClusterAttributeKeyValue('xiaoControl',{...saved,inputMode:0,switchType:13});
+    const keys = () => definition.exposes(device,{}).filter((x)=>x.endpoint==='ch24').map((x)=>x.property);
+    const before = keys();
+    endpoint.write = async()=>{throw new Error('Simulated failed Zigbee write');};
+    await assert.rejects(dispatch({switch_type_ch24:'brightness_level'},meta),/failed Zigbee write/);
+    assert.deepEqual(keys(),before);
+    for (const type of [3,9,13]) {
+        fz.convert(definition,{endpoint,type:'readResponse',data:{switchType:type}},undefined,{},meta);
+        for (const [key,value] of Object.entries(saved))
+            assert.equal(endpoint.getClusterAttributeValue('xiaoControl',key),value);
+    }
+    assert.ok(keys().includes('scene_list_ch24'));
+    assert.ok(!keys().includes('scene_id_ch24'));
 });

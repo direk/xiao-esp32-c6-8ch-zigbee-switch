@@ -16,6 +16,7 @@
 #include "ota_client.h"
 #include "device_services.h"
 #include "input_router.h"
+#include "config_write_guard.h"
 #include <stdlib.h>
 #include "zboss_api.h"
 #include "serial_input.h"
@@ -56,6 +57,7 @@ static const gpio_num_t pins[CHANNELS] = {GPIO_NUM_0, GPIO_NUM_1, GPIO_NUM_2, GP
 static const char *TAG = "xiao8";
 static endpoint_config_t cfg, write_candidate;
 static input_router_t input_router;
+static config_write_guard_t config_write_guard;
 typedef struct { uint8_t version; channel_config_v2_t channels[CHANNELS]; } legacy_config_t;
 _Static_assert(sizeof(legacy_config_t)==130,"Legacy NVS blob layout changed");
 static nvs_handle_t nv;
@@ -246,6 +248,9 @@ static bool config_value(channel_config_t *c, uint16_t id, const uint8_t *v) {
 }
 static void dispatch(unsigned i,const command_t *c);
 static int check_value(uint16_t id,uint8_t ep,uint8_t *v) {
+    // A local SDK setter can re-enter validation while an accepted write is applying.
+    // Do not overwrite the outer write_candidate or interpret it as a new user request.
+    if(config_write_active(&config_write_guard))return ESP_ZB_ZCL_STATUS_SUCCESS;
     if(reset_pending)return ESP_ZB_ZCL_STATUS_FAIL;
     if(!v || ep<1 || ep>ENDPOINTS)return ESP_ZB_ZCL_STATUS_INVALID_VALUE;
     write_candidate=cfg;
@@ -274,10 +279,11 @@ static int check_value(uint16_t id,uint8_t ep,uint8_t *v) {
     }
     return valid && endpoint_config_valid(&write_candidate) ? ESP_ZB_ZCL_STATUS_SUCCESS : ESP_ZB_ZCL_STATUS_INVALID_VALUE;
 }
-static void write_attr(uint8_t ep,uint16_t id,uint8_t *v,uint16_t manufacturer) {
-    (void)manufacturer;
-    if(check_value(id,ep,v)!=ESP_ZB_ZCL_STATUS_SUCCESS)return;
-    if(id==ATTR_BINDING_PRIORITY)binding_priority[ep-1]=*v;
+typedef struct {uint8_t ep;uint16_t id;} config_write_request_t;
+static void apply_attribute(void *context) {
+    const config_write_request_t *request=context;
+    uint8_t ep=request->ep;uint16_t id=request->id;
+    if(id==ATTR_BINDING_PRIORITY)binding_priority[ep-1]=write_candidate.priorities[ep-1];
     else {
         bool pin_setting=id>=ATTR_PIN_MODE && id<=ATTR_PIN_MULTI;
         uint8_t affected=pin_setting ? 1U<<(ep-1) : 0;
@@ -309,6 +315,15 @@ static void write_attr(uint8_t ep,uint16_t id,uint8_t *v,uint16_t manufacturer) 
     }
     dirty=true;dirty_at=now_ms();
     ESP_LOGI(TAG,"Configuration write EP%u attr=0x%04x",ep,id);
+}
+static void write_attr(uint8_t ep,uint16_t id,uint8_t *v,uint16_t manufacturer) {
+    (void)manufacturer;
+    // SDK set_attribute_val(check=false) still calls this hook. Nested alias/status
+    // updates belong to the outer transaction; the SDK performs their actual copy.
+    if(config_write_active(&config_write_guard))return;
+    if(check_value(id,ep,v)!=ESP_ZB_ZCL_STATUS_SUCCESS)return;
+    config_write_request_t request={.ep=ep,.id=id};
+    config_write_run(&config_write_guard,apply_attribute,&request);
 }
 static void send_action(unsigned i,uint8_t action) {
     uint32_t seq=((events[i]>>8)+1)&0xffffff;

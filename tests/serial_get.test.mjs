@@ -17,7 +17,7 @@ test('GET returns valid complete JSON for all 14 modes, rocker modes and eight c
             'firmware/main/serial_input.c', 'tests/serial_get_harness.c', '-o', executable], {cwd: root});
         const rows = execFileSync(executable, {encoding: 'utf8'}).trim().split('\n').map((line) => JSON.parse(line));
         assert.equal(rows.length, 16 * 8);
-        const modes = definition.exposes.find((x) => x.property === 'switch_type_ch1').values;
+        const modes = definition.exposes(undefined, {}).find((x) => x.property === 'switch_type_ch1').values;
         const gestures = [
             ['single'], ['single', 'release'], ['single', 'double', 'triple', 'hold', 'release'],
             ['single', 'hold', 'release'], ['single', 'double', 'hold', 'release'],

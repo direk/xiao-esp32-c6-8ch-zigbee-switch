@@ -291,3 +291,52 @@ przypiętej biblioteki 1.6.9 potwierdziła stały krok 21 bajtów, także dla
 - Pełna migracja 24 endpointów na żywym stosie Zigbee, nowy Interview Z2M,
   rzeczywisty zapis NVS przez zanik zasilania i sprzętowe bindingi 24 EP są
   testami użytkownika. Nie wykonano flashowania ani transferu OTA przez agenta.
+
+
+## Lokalna poprawka 2.3.1
+
+- Ustalona ścieżka SDK: esp_zb_zcl_set_attribute_val -> zb_zcl_set_attr_val ->
+  zb_zcl_set_attr_val_manuf_internal -> zb_zcl_write_attr_hook. Wariant check=false
+  nie wyłącza hooka. W 2.3.0 callback synchronizował kolejne RW atrybuty tym samym
+  setterem, co dawało rekurencję i brak odpowiedzi na Write Attributes.
+- Test config_write_guard symuluje 80 aktualizacji aliasów i ponowne wejścia
+  SDK; ustawienie zmienia się raz, candidate nie jest zastępowany przez nested
+  callback, następne zewnętrzne ustawienie działa. Test z ASan/UBSan dodany do CI.
+- Obie anteny kompilowane lokalnie. Testy nowej konfiguracji po Zigbee na
+  fizycznym urządzeniu wymagają testu użytkownika; nie podłączono urządzenia
+  i nie wykonano flashowania ani publikacji tej poprawki.
+- Dodano również test rzeczywistych funkcji config_value/check_value/apply_attribute/write_attr
+  wyciętych z produkcyjnego main.c i skompilowanych z backendem imitującym hooki SDK.
+  Sprawdza CH1 legacy→single, Stop z raportem w trakcie zapisu, następne ustawienie,
+  priorytet bez przerwania hold oraz prawidłowe odrzucanie konfliktów i aliasy pinu.
+- Jednorazowo uruchomiono ten sam harness z funkcjami odczytanymi z tagu v2.3.0:
+  zatrzymał się na asercji drugiego zagnieżdżonego wejścia SDK. Wersja poprawiona
+  przechodzi test i zwraca odpowiedź. Test nie wysyła komend do prawdziwego urządzenia.
+
+### Konwerter 0.1.1 — widoczność switch_actions (lokalnie)
+
+- `npm test`: 26 testów zaliczonych, 1 test opublikowanych artefaktów pominięty.
+- Dynamiczna definicja przygotowana przez przypięty zigbee-herdsman-converters:
+  wszystkie 14 typów × 24 endpointy, push/rocker, ukrywanie i przywracanie pola.
+- Odtworzone aktualizowanie cache przed konwerterem (jak w herdsman), częściowe
+  odpowiedzi, zachowany cache po restarcie i brak powiadomień dla powtórzeń.
+- Zmiana trybu pinu odczytuje aliasy wszystkich endpointów; zmiana input_source
+  odczytuje jego efektywny input_mode. Pozostałe ustawienia i zapis switch_actions
+  pozostają dostępne przez protokół, nawet gdy pole jest ukryte w panelu.
+- Sprawdzony interfejs `deviceExposesChanged` w kodzie Z2M 2.14.3.
+  Zachowanie panelu wymaga jeszcze sprawdzenia w działającym Z2M użytkownika.
+
+
+### Konwerter 0.1.2 — warunkowe parametry endpointów (lokalnie)
+
+- `npm test`: 28 testów zaliczonych, 1 test opublikowanych artefaktów pominięty.
+- Sprawdzona pełna tabela 14 typów × 24 endpointy: switch_actions, min/max level,
+  min/max temperatury barwowej, transition_time, scene_id, group_id i scene_list.
+- Niezależność endpointów i stała dostępność źródła, gestu, trybu, invert,
+  switch_type oraz binding_priority. Brak odświeżania dla niezmienionego
+  zestawu pól; odświeżenie także między brightness a scene, gdy switch_actions
+  pozostaje ukryte.
+- Test zachowania wartości przy ukryciu/przywróceniu oraz nieudanego zapisu typu,
+  który nie zmienia widoczności przed potwierdzeniem przez urządzenie.
+- Firmware i pliki OTA bez zmian; niczego nie opublikowano ani nie wgrano.
+  Sprawdzenie w panelu działającego Z2M pozostaje do wykonania.

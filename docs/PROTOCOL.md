@@ -1,4 +1,4 @@
-# XIAO-C6-8CH firmware 2.3.0 / serial protocol 3
+# XIAO-C6-8CH firmware 2.3.1 / serial protocol 3
 
 24 endpoints (1–24), eight physical inputs, profile 0x0104, manufacturer DIY-XIAO, model XIAO-C6-8CH.
 Every endpoint advertises outgoing On/Off (0x0006), Level Control (0x0008),
@@ -110,12 +110,59 @@ The mask restores only channels whose legacy selector is Toggle. Phase is RAM-on
 No application-level Zigbee retransmission/replay or battery emulation.
 Zigbee OTA is available from 2.2.0; see OTA.md. Zigbee routing/delivery and APS handling remain in SDK.
 
-UART protocol v2 adds INFO/STATUS JSON, RESET and optional `@uint32` IDs.
-IDs increase within a boot; the last 16 full responses are replayed without
-execution. Older IDs outside the cache fail with ERR ID_EXPIRED instead of
-executing again; reusing a cached ID for a different command fails with
-ERR ID_CONFLICT. The boot_id in INFO/STATUS changes on restart; request history
-is RAM-only. Untagged legacy commands retain their behavior.
+### Request IDs and retry rules (UART and USB, protocol 2+)
+
+The optional prefix is `@<decimal uint32> `, with IDs in **1..4294967295**.
+An ID identifies a request, not a channel, endpoint or scene. Every wire line
+ends in LF. For example, for an endpoint accepting CLICK:
+
+```text
+request: @42 CLICK EP2\n
+reply:   @42 OK CLICK EP2\n
+retry:   @42 CLICK EP2\n
+reply:   @42 OK CLICK EP2\n
+next:    @43 CLICK EP2\n
+```
+
+The retry returns the cached reply without executing a second click. In contrast,
+`CLICK EP2` without an ID remains valid but has no duplicate suppression.
+
+- Allocate a strictly increasing ID for each new request, across all commands
+  and endpoints on the same port. Gaps are allowed; do not wrap at UINT32_MAX.
+- On a missing reply, resend the same command with the same ID. Using a new ID
+  creates a new request and can repeat the action. Match replies by their ID;
+  use one outstanding request at a time and bounded retries. Ignore `#LOG ` lines.
+- The last **16 session-executed numbered requests** retain their full replies,
+  including errors such as `ERR NOT_READY`. Repeating such an ID returns the
+  original error even if conditions have changed. Once the cause is resolved,
+  a deliberate new attempt needs a new ID. Numbered INFO/STATUS also occupy
+  cache entries; unnumbered requests do not consume IDs or cache entries.
+- Reusing a cached ID with a different parsed command returns
+  `@42 ERR ID_CONFLICT\n`, with no execution. Comparison includes operation,
+  physical-vs-endpoint target, channel/endpoint and duration. Thus `CLICK 2`
+  and `CLICK EP2` are distinct, even when their effects happen to coincide.
+- An ID at or below the highest accepted ID, no longer present in the cache,
+  returns `ERR ID_EXPIRED` and is not executed. Do not automatically replace
+  it with a new ID: its previous effect is uncertain and may already have occurred.
+- History and the highest ID are RAM-only. Read unnumbered `INFO` at client
+  startup and after communication loss; `boot_id` identifies the current XIAO
+  boot. A changed boot_id allows starting from 1, but old unacknowledged actions
+  must not be replayed automatically across the reboot, including RESET itself.
+- A controller restart does not reset XIAO. Persist the allocated ID and pending
+  request before transmission, associated with boot_id and port. If boot_id is
+  unchanged, resume that session. If local history was lost, do not blindly
+  restart at 1 or issue a fresh action for an uncertain previous request;
+  application-level recovery is required. INFO does not expose the highest ID.
+- UART and USB have independent histories and counters. Retrying via the other
+  port can execute again. Multiple senders on one port must share one allocator.
+- OK acknowledges local command handling, not lamp response or Zigbee delivery.
+  A valid gesture may have no effect in the current endpoint mode (see GET EPn).
+  This is duplicate suppression within a boot, not an exactly-once lamp guarantee.
+- Parser/transport failures may be untagged and are not cached session replies.
+  Do not interpret an untagged error as an acknowledgement for another ID.
+
+User-oriented rules and examples are also in README, “Opcjonalny numer komendy
+@ID — zasady i ponawianie”.
 
 UART receive error events invalidate the current line, flush input and discard
 through the next LF. Diagnostics use atomic UART counters; only the UART task
@@ -252,3 +299,21 @@ config3; network RESET retains it. Rollback firmware cannot use new mappings.
 Configuration changes cancel affected endpoint holds before replacing their
 settings, then rebase the affected physical pins to suppress synthetic events.
 Binding priority writes alone do not interrupt operation.
+
+
+## Configuration write-hook reentrancy (2.3.1 fix)
+
+In SDK 1.6.9, zb_zcl_set_attr_val_manuf_internal calls zb_zcl_write_attr_hook
+before copying the value even when check_access=false. A user inputGesture
+write in 2.3.0 synchronized all inputMode/invert/pin aliases via the same SDK
+setter; that setter re-entered write_attr and recursively synchronized aliases
+again, preventing a Write Attributes Response and causing a Z2M timeout.
+
+config_write_guard now scopes the whole accepted apply operation. Internal
+validation returns success without replacing the pending candidate; internal
+write hooks return immediately, leaving the SDK to copy their values. The guard
+is released after the outer operation, so subsequent external writes continue.
+No reporting/routing/persistence code runs a second time for local alias writes.
+Config3 and all wire attributes remain compatible. Converter 0.1.2 additionally
+filters the exposed configuration fields by endpoint mode/type; this does not
+change wire attributes or stored values.

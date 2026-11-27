@@ -1,15 +1,28 @@
 # XIAO ESP32-C6 — 8 wejść i 24 endpointy Zigbee
 
-Wersja **2.3.0** dla Seeed Studio XIAO ESP32-C6 ze stałym zasilaniem USB i
+Wersja **2.3.1** dla Seeed Studio XIAO ESP32-C6 ze stałym zasilaniem USB i
 anteną zewnętrzną U.FL albo wewnętrzną (osobne obrazy firmware’u). Urządzenie pracuje jako router Zigbee, bez usypiania
 i bez heartbeat. Każdy z 24 endpointów ma własną konfigurację, bindingi i binding_priority.
 Osiem wejść fizycznych można przypisywać do endpointów niezależnie.
 
 [Kod źródłowy](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch).
-[Wydanie 2.3.0 — firmware, konwerter i kompletna paczka](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch/releases/tag/v2.3.0).
-Skrypt pakujący generuje również lokalne `dist/xiao-8ch-v2.3.0.zip`.
+[Wydanie 2.3.1 — firmware, konwerter i kompletna paczka](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch/releases/tag/v2.3.1).
+Skrypt pakujący generuje również lokalne `dist/xiao-8ch-v2.3.1.zip`.
 [Wydanie 1.2.0 na GitHubie](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch/releases/tag/v1.2.0)
 jest starszą wersją czterokanałową.
+
+## Zmiany w 2.3.1
+
+Naprawia timeout Z2M przy zmianie `input_gesture` i innych ustawień. SDK
+wywołuje write hook także podczas lokalnej synchronizacji atrybutów; wcześniej
+powodowało to ponowne wejście w zapis i rekurencję. Nowy guard obejmuje całą
+operację, nie pozwala zagnieżdżonym aktualizacjom nadpisać konfiguracji i zostaje
+zwolniony przed kolejnym zewnętrznym zapisem. Parametry, mapy i NVS nie zmieniają
+formatu. Samą poprawkę firmware’u obsługuje także konwerter **0.1.0**. Konwerter **0.1.2** dodatkowo ukrywa nieużywane pola konfiguracji endpointów.
+Obrazy `xiao-8ch-v2.3.1-{external,internal}.zigbee` mają wersję OTA
+0x02030100. Wydanie zawiera firmware dla obu anten i konwerter 0.1.2;
+po jego podmianie zrestartuj Z2M i wykonaj **Reconfigure**.
+Szczegółowe zasady numeracji żądań UART/USB `@ID` opisano poniżej.
 
 ## Podłączenie
 
@@ -46,7 +59,7 @@ Urządzenie zewnętrzne może symulować CH1–CH8 przez `PRESS`, `RELEASE`,
 kończone LF; np. `CLICK 2\n` symuluje kliknięcie CH2. Obowiązują te same
 tryby i binding priority co dla fizycznych przycisków. UART i USB-C mają
 osobne zadania FreeRTOS i niezależne sesje identyfikatorów; komendy trafiają do Zigbee przez ograniczoną
-kolejki, bez czekania na porty w obsłudze Zigbee. Odpowiedź wraca na port
+kolejkę, bez czekania na porty w obsłudze Zigbee. Odpowiedź wraca na port
 żądania. Pełna kolejka USB nie blokuje UART.
 `GET 2\n` zwraca jedną linię JSON z pełną konfiguracją CH2, dozwolonymi
 komendami UART (`commands`) i gestami dającymi efekt (`gestures`). Odczyt
@@ -71,6 +84,68 @@ Podłącz TX urządzenia do D7/RX, RX do D6/TX i wspólną masę.
 Prawdziwy RS-232 wymaga konwertera poziomów (np. MAX3232); nie podłączaj go
 bezpośrednio do GPIO. [Pełny opis protokołu i odpowiedzi](docs/UART.md).
 
+
+### Opcjonalny numer komendy `@ID` — zasady i ponawianie
+
+`@ID` to identyfikator **żądania**, a nie numer kanału, endpointu czy sceny.
+Jest opcjonalny: `CLICK EP2` działa bez niego. Warto go używać, gdy urządzenie
+sterujące czeka na odpowiedź i ponawia komendę po jej utracie.
+
+Przykład dla endpointu skonfigurowanego tak, aby kliknięcie dawało efekt
+(każda linia wysłana i odebrana kończy się LF, czyli `\n`):
+
+```text
+ESP32 → XIAO: @42 CLICK EP2
+XIAO → ESP32: @42 OK CLICK EP2
+```
+
+Jeżeli odpowiedź zaginie, ESP32 wysyła ponownie `@42 CLICK EP2`.
+XIAO zwraca zapamiętane `@42 OK CLICK EP2`, **bez drugiego kliknięcia**.
+Następne, zamierzone kliknięcie ma nowy numer: `@43 CLICK EP2`.
+To chroni np. przed podwójnym Toggle, które zapaliłoby i natychmiast zgasiło lampę.
+
+1. **Nowe żądanie → nowy, większy numer.** Dopuszczalne są liczby dziesiętne
+   `1..4294967295`, bez zawijania licznika w tym samym uruchomieniu XIAO.
+   Licznik jest wspólny dla wszystkich kanałów i komend na danym porcie,
+   nie osobny dla każdego endpointu. Luki w numeracji są dozwolone.
+2. **Brak odpowiedzi → ten sam numer i ta sama komenda.** Zwiększenie numeru
+   przy ponowieniu traktowane jest jako nowe żądanie i może wykonać akcję ponownie.
+   Dopasuj odpowiedź po prefiksie `@ID`. Zalecamy jedno oczekujące żądanie naraz,
+   ograniczoną liczbę ponowień i pomijanie linii `#LOG `, jeśli włączono logi.
+3. **Ostatnie 16 odpowiedzi jest pamiętane.** Wpis może zawierać także błąd,
+   np. `ERR NOT_READY`. Powtórzenie tego samego ID zwróci wtedy ten sam błąd,
+   nawet gdy sieć jest już gotowa. Po usunięciu przyczyny błędu wyślij nowe
+   żądanie z nowym ID. `INFO`, `STATUS` i inne numerowane żądania również
+   zajmują miejsce w historii; zwykłe komendy bez ID nie zajmują go.
+4. **Ten sam ID z inną komendą → `ERR ID_CONFLICT`.** Przykładowo po
+   `@42 CLICK EP2` nie wolno wysłać `@42 CLICK EP3` ani `@42 CLICK 2`.
+   `CLICK 2` oznacza wejście fizyczne, a `CLICK EP2` endpoint logiczny.
+5. **Stary ID poza historią → `ERR ID_EXPIRED`.** XIAO nie wykonuje go ponownie.
+   Nie zamieniaj automatycznie takiego żądania na nowe ID: poprzednia akcja
+   mogła już nastąpić. Najpierw rozstrzygnij wynik lub zgłoś niepewność.
+6. **Restart XIAO zeruje historię.** Przed rozpoczęciem komunikacji wyślij
+   zwykłe `INFO` i odczytaj `boot_id`; kontroluj go również po przerwie
+   w komunikacji. Gdy zmieni się `boot_id`, można rozpocząć numerację od 1,
+   ale nie ponawiaj automatycznie niepotwierdzonych akcji z poprzedniego
+   uruchomienia — XIAO nie pamięta już, czy je wykonało.
+7. **Restart sterującego ESP32 nie zeruje historii XIAO.** Zachowuj na ESP32
+   numerację i oczekujące żądanie wraz z `boot_id` oraz portem przed wysłaniem.
+   Jeśli XIAO nadal ma ten sam `boot_id`, kontynuuj tę sesję. Nie zaczynaj
+   automatycznie od 1 i nie twórz nowego żądania w miejsce starego o nieznanym
+   wyniku. Utrata lokalnej historii wymaga świadomego odzyskania synchronizacji.
+8. **UART i USB mają niezależne sesje.** Powtórzenie komendy na drugim porcie
+   nie jest deduplikowane względem pierwszego. Wszystkie urządzenia nadające
+   na jednym porcie muszą współdzielić jeden licznik.
+
+`OK` potwierdza przyjęcie/obsłużenie komendy przez XIAO. **Nie potwierdza
+reakcji lampy ani dostarczenia polecenia Zigbee.** Gest może też nie dawać
+żadnej akcji przy danej konfiguracji — sprawdź `GET EP2`.
+Ochrona `@ID` dotyczy ponownego wykonania żądania w bieżącej sesji XIAO;
+nie zapewnia jednokrotnego efektu na lampie przez restarty i utratę zasilania.
+Błędy parsera lub przepełnienia kolejki mogą nie mieć prefiksu `@ID`;
+nie traktuj ich jako numerowanego potwierdzenia innej komendy.
+
+
 ## Ustawienia kanału
 
 - `input_mode`: `push` dla przycisku chwilowego, `rocker` dla przełącznika
@@ -81,7 +156,7 @@ bezpośrednio do GPIO. [Pełny opis protokołu i odpowiedzi](docs/UART.md).
 - `invert`: odwraca aktywny poziom wejścia.
 - `binding_priority`: `ON` (domyślnie) pomija `action`, gdy polecenie idzie
   przez binding. `OFF` zachowuje sterowanie przez binding i dodatkowo wysyła
-  `action`. Opcja jest niezależna dla CH1–CH8 i zapisywana na urządzeniu.
+  `action`. Opcja jest niezależna dla CH1–CH24 i zapisywana na urządzeniu.
   Bez pasującego bindingu kanał zawsze wysyła `action`.
 - `switch_type`: funkcja z tabeli poniżej, osobna dla każdego kanału.
 - `switch_actions`: `off`, `on`, `toggle` lub `on_off` dla wejścia push w funkcjach
@@ -92,6 +167,14 @@ bezpośrednio do GPIO. [Pełny opis protokołu i odpowiedzi](docs/UART.md).
   Każdy kanał ma osobną kolejność, wspólną dla przycisku i komend UART/USB.
   Dla `push + momentary` kolejność ON/OFF zmienia się zarówno przy naciśnięciu, jak i puszczeniu.
   `rocker` i funkcje zaawansowane ignorują `switch_actions`.
+  Od konwertera **0.1.1** Z2M pokazuje to pole tylko dla `push` z typem
+  `toggle` lub `momentary`, niezależnie dla każdego z 24 endpointów.
+  Po potwierdzeniu zmiany konfiguracji pole automatycznie znika albo wraca;
+  jego zapisana wartość pozostaje bez zmian. Przed pierwszym odczytem konfiguracji
+  pole może być widoczne. Po podmianie konwertera zrestartuj Z2M i wykonaj
+  **Reconfigure**, aby odczytać aktualne ustawienia wszystkich endpointów.
+  Nie wymaga to nowego firmware’u ani ponownego parowania.
+
   Ustawienie jest trwałe; kolejność jest w RAM, bez zapisu pamięci przy każdym kliknięciu.
   Po restarcie lub zapisie `switch_actions` zaczyna się od ON; inne ustawienia zachowują kolejność.
   Zewnętrzne automatyzacje i stan żarówek nie zmieniają kolejności: jeśli następne jest ON,
@@ -102,6 +185,29 @@ bezpośrednio do GPIO. [Pełny opis protokołu i odpowiedzi](docs/UART.md).
 - `color_temp_min`, `color_temp_max`: granice temperatury w miredach,
   domyślnie 153 i 500; dopasuj do możliwości lampy.
 - `scene_id`, `group_id`: numer sceny i grupy dla funkcji `scene`.
+
+Od konwertera **0.1.2** pozostałe parametry również pojawiają się
+według `switch_type`, osobno dla każdego z 24 endpointów:
+
+| Pole | Widoczne dla |
+|---|---|
+| `switch_actions` | `push` + `toggle` lub `momentary` |
+| `min_level`, `max_level` | `brightness_level`, `brightness_level_up`, `brightness_level_down` i ich warianty `*_no_onoff` |
+| `color_temp_min`, `color_temp_max` | `move_to_color_temperature`, `move_to_color_temperature_up`, `move_to_color_temperature_down` |
+| `transition_time` | Wszystkie powyższe typy jasności i temperatury barwowej |
+| `scene_id` | `scene` |
+| `group_id` | `scene` lub `scene_cycle` |
+| `scene_list` | `scene_cycle` |
+
+`switch_type`, `input_source`, `input_gesture`, `input_mode`, `invert` oraz
+`binding_priority` pozostają widoczne. Reguły nie zależą od wybranego gestu
+ani obecności bindingu: endpoint można również wyzwalać przez UART/USB.
+Z2M odświeża pola po potwierdzonym odczycie ustawień z urządzenia. Ukryte
+wartości pozostają zapisane i wracają po ponownym wybraniu odpowiedniego typu;
+ukrywanie nie blokuje bezpośrednich komend MQTT ani UART/USB.
+Przed pierwszym odczytem nieznanego typu pola pozostają widoczne.
+Po instalacji konwertera **0.1.2** zrestartuj Z2M i wykonaj **Reconfigure**.
+To zmiana konwertera, bez potrzeby wgrywania firmware’u lub parowania.
 
 Przed wybraniem zaawansowanej funkcji ustaw `input_mode=push`. Próba użycia jej
 z wejściem rocker zostanie odrzucona. Przy zmianie granic min/max najpierw ustaw
@@ -384,7 +490,7 @@ i `throttle: 0`. W Z2M wymagającym włączenia zewnętrznych konwerterów ustaw
 
 ## Wgranie obrazów
 
-Rozpakuj `dist/xiao-8ch-v2.3.0.zip`. Wybierz wariant odpowiadający antenie:
+Rozpakuj `dist/xiao-8ch-v2.3.1.zip`. Wybierz wariant odpowiadający antenie:
 
 | Antena | Aplikacja do zestawu USB (0x10000) | Czysta instalacja (0x0) |
 |---|---|---|
@@ -586,7 +692,7 @@ python scripts/package_release.py --idf-path "$IDF_PATH"
 
 Skrypt najpierw kompiluje oba warianty (również przyrostowo), a potem używa
 programu esptool zainstalowanego razem z ESP-IDF; nie wymaga
-ręcznego kopiowania obrazów. Utworzy `dist/xiao-8ch-v2.3.0.zip` w głównym
+ręcznego kopiowania obrazów. Utworzy `dist/xiao-8ch-v2.3.1.zip` w głównym
 katalogu projektu i usunie swoje pliki tymczasowe. ZIP zawiera obrazy do wgrania,
 źródła, konwerter, dokumentację, licencje i sumy kontrolne. Obok ZIP powstaną
 cztery obrazy z nazwami anten, konwerter, `manifest.json` i `SHA256SUMS` do
