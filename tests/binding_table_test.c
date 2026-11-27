@@ -13,7 +13,7 @@ static size_t record(uint8_t *p, unsigned ep, uint16_t cluster, unsigned mode, c
 }
 static void header(uint8_t *p,unsigned index,unsigned total,unsigned count){p[0]=77;p[1]=0;p[2]=total;p[3]=index;p[4]=count;}
 int main(void) {
-    uint8_t data[800]={0}; binding_page_t page,poison;
+    uint8_t data[4096]={0}; binding_page_t page,poison;
     // Regression: group entries have 14 bytes, not the SDK's fixed 21-byte stride.
     for(unsigned first=1;first<=3;first+=2)
     for(unsigned second=1;second<=3;second+=2) {
@@ -33,6 +33,12 @@ int main(void) {
         for(unsigned i=0;i<8;++i){unsigned ep=reverse?8-i:i+1;n+=record(data+n,ep,clusters[cluster],i%2?3:1,own,lamp);}
         assert(binding_page_decode(data,n,own,coord,&page));assert(page.mask==0xff && page.clusters[cluster]==0xff);
     }
+    for(unsigned reverse=0;reverse<2;++reverse) {
+        header(data,0,96,96);size_t n=5;
+        for(unsigned i=0;i<96;++i)n+=record(data+n,reverse?24-i%24:i%24+1,clusters[i/24],i%2?3:1,own,lamp);
+        assert(binding_page_decode(data,n,own,coord,&page));assert(page.mask==0xffffff);
+        for(unsigned i=0;i<4;++i)assert(page.clusters[i]==0xffffff);
+    }
     // Pagination accumulates endpoints without changing earlier pages.
     binding_scan_t scan={0};uint8_t masks[4]={0};
     for(unsigned index=0;index<8;index+=2) {
@@ -49,7 +55,7 @@ int main(void) {
     n+=record(data+n,2,CL_LEVEL,3,own,own);
     n+=record(data+n,3,CL_COLOR,1,lamp,lamp);
     n+=record(data+n,0,CL_ONOFF,1,own,lamp);
-    n+=record(data+n,9,CL_ONOFF,1,own,lamp);
+    n+=record(data+n,25,CL_ONOFF,1,own,lamp);
     n+=record(data+n,4,0xfc00,3,own,lamp);
     n+=record(data+n,8,CL_SCENES,1,own,lamp);
     assert(binding_page_decode(data,n,own,coord,&page));assert(page.mask==0x80 && page.clusters[3]==0x80);
@@ -58,7 +64,7 @@ int main(void) {
     assert(binding_page_decode(data,n,own,NULL,&page) && page.mask==0xff);
     header(data,0,0,0);assert(binding_page_decode(data,5,own,coord,&page) && !page.mask);
     header(data,0,1,0);assert(!binding_page_decode(data,5,own,coord,&page));
-    header(data,0,33,1);assert(!binding_page_decode(data,5,own,coord,&page));
+    header(data,0,97,1);assert(!binding_page_decode(data,5,own,coord,&page));
     header(data,0,1,1);n=5+record(data+5,1,CL_ONOFF,1,own,lamp);data[16]=2;assert(!binding_page_decode(data,n,own,coord,&page));
     data[1]=0x84;assert(!binding_page_decode(data,2,own,coord,&page));
     assert(!binding_page_decode(NULL,5,own,coord,&page));

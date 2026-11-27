@@ -45,7 +45,7 @@ Przyszła zmiana układu pamięci nadal będzie wymagała migracji USB.
 
 ## Konwerter i interview w Z2M
 
-1. Podmień `xiao-c6-8ch.mjs` na rewizję 0.0.7 z tego wydania i zrestartuj Z2M.
+1. Podmień `xiao-c6-8ch.mjs` na rewizję 0.0.9 z tego wydania i zrestartuj Z2M.
 2. Dla istniejącego urządzenia wykonaj **ponowny interview**, aby Z2M odkrył
    klaster genOta na endpoint 1. Samo Reconfigure nie odświeża listy klastrów.
 3. Wykonaj konfigurację urządzenia i otwórz zakładkę OTA.
@@ -139,3 +139,46 @@ zmian konfiguracji kompilacji wyłącznie w wygenerowanym sdkconfig.
 Źródła: [Z2M OTA](https://www.zigbee2mqtt.io/guide/usage/ota_updates.html),
 [klient OTA SDK 1.x](https://github.com/espressif/esp-zigbee-sdk/tree/release/v1.0/examples/esp_zigbee_ota/ota_client),
 [ESP-IDF OTA](https://docs.espressif.com/projects/esp-idf/en/v5.4.2/esp32c6/api-reference/system/ota.html).
+
+
+## Lokalny test bez publikacji
+
+Wersja 2.3.0 jest dostępna w wydaniu na GitHubie. Publiczny indeks
+`ota/index.json` zawiera obrazy dla obu anten, dobierane po imageType.
+Poniższa procedura pozwala także użyć własnych lokalnych plików zamiast
+publicznego indeksu. Nie wymaga modyfikowania firmware’u ani jego wersji.
+
+1. Do samego OTA wystarczy dotychczasowy konwerter obsługujący OTA (0.0.7+).
+   Konwerter 0.1.0 wymaga nowego firmware’u 2.3.0 do pełnego Reconfigure.
+2. W zakładce OTA wskaż własny plik zgodny z anteną:
+   `dist/xiao-8ch-v2.3.0-external.zigbee` albo
+   `dist/xiao-8ch-v2.3.0-internal.zigbee`.
+3. Jeśli korzystasz z lokalnego indeksu, skopiuj oba obrazy i
+   `dist/ota-index-local.json` do katalogu danych Z2M. Wskaż ten indeks przez
+   `ota.zigbee_ota_override_index_location`. Indeks używa lokalnych nazw plików;
+   zachowaj ich nazwy. Po teście przywróć wcześniejsze ustawienie indeksu.
+4. Po aktualizacji sprawdź wersję 2.3.0, podmień konwerter na lokalny
+   `dist/xiao-c6-8ch.mjs` (0.1.0) i zrestartuj Z2M. Wykonaj Interview oraz
+   Reconfigure, aby wykryć **24 endpointy** i odczytać ich konfigurację.
+5. Dla testowanego kanału ustaw push, group_id, scene_list=`0,1,3`,
+   switch_type=scene_cycle. Sprawdź 0→1→3→0, restart, osobny drugi kanał
+   oraz zachowanie bez Z2M. Sceny muszą istnieć w lampach wybranej grupy.
+
+Wersja OTA wynosi 0x02030000, jest nowsza od 2.2.0. Pliki `.bin` służą
+wyłącznie do programowania przez USB; do Zigbee używaj `.zigbee`.
+
+Dodatkowy test 2.3.0: w Z2M użyj `identify`, sprawdź GPIO15 i automatyczne
+zgaszenie LED. Odczytaj number_of_resets/reset_reason/uptime, zrestartuj XIAO
+i sprawdź wzrost trwałego licznika. Sprawdzenie migania i diagnostyki na żywym
+urządzeniu jest zadaniem testera; nie zostało wykonane przez USB.
+
+
+Test 2.3.0: po Interview sprawdź listę EP1..EP24. Przed przypisaniem kolejnych
+endpointów do fizycznego pinu zmień jego stary endpoint z legacy na single
+(oraz pin_mode na push). Przykład D1: EP2=single/on_off, EP10=double/scene_cycle,
+EP18=hold/brightness_level. Wykonaj bindingi dla właściwych endpointów i klastrów.
+Zweryfikuj rozdzielenie klik/dwuklik/hold, Stop, niezależny binding priority,
+CLICK EP24/GET EP24/STATUS EP24 przez UART i USB, RELEASE ALL oraz zapis po
+restarcie. Nowe EP mają source=none po migracji. Dotychczasowe EP1..8 zachowują
+bindingi i konfigurację. Tabela ma 96 miejsc; nie są to 96 miejsca per endpoint.
+Nie przełączaj anteny przez OTA; dobór imageType działa tak jak w 2.2.x.

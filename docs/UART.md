@@ -465,3 +465,88 @@ Postęp received/total dotyczy bajtów aplikacji, bez nagłówka kontenera Zigbe
 Slot ota_0 albo ota_1 oznacza uruchomioną aplikację. Stany OTA: idle,
 downloading, validating, ready, reboot_pending, error. Te pola nie zmieniają
 składni komend ani niezależnych ustawień LOG dla obu portów.
+
+
+## `on_off` od testowej wersji 2.2.1
+
+`GET x` zwraca `"switch_actions":"on_off"`, jeśli wybrano tę opcję w Z2M
+(konwerter 0.0.8 i nowy firmware). Listy komend i gestów pozostają zgodne z
+`input_mode` i `switch_type`.
+Dla `push + toggle` kolejne `CLICK x` lub stabilne `PRESS x` po `RELEASE x`
+wysyłają jawne ON, OFF, ON, OFF. Puszczenie nie zmienia kolejności.
+Dla `push + momentary` naciśnięcie i puszczenie wysyłają kolejne ON/OFF z tej samej sekwencji.
+Wejście fizyczne i wirtualne tworzą jeden stan logiczny OR: nakładające się
+naciśnięcia nie liczą się podwójnie. Każdy kanał ma własną kolejność.
+Po restarcie lub zapisie opcji `switch_actions` pierwszą komendą jest ON.
+Stan żarówek zmieniony zewnętrznie nie zmienia tej kolejności.
+
+
+## `scene_cycle` od testowej wersji 2.2.1
+
+`GET x` zawiera `"switch_type":"scene_cycle"` i `"scene_list":"0,1,3"`
+oraz group_id. Konfiguracja jest zapisywana przez Z2M; GET jej nie zmienia.
+Przy niepustej liście i group_id>0 każde stabilne naciśnięcie wybiera następne ID.
+`CLICK x` wybiera jedną scenę, `DOUBLE x` dwie, `TRIPLE x` trzy.
+`HOLD x 1000` wybiera jedną scenę przy naciśnięciu, bez dodatkowej akcji
+po czasie lub puszczeniu. PRESS wymaga RELEASE przed następnym naciśnięciem.
+Gest dający efekt to single. Nakładające się fizyczne i wirtualne wejście nie
+liczy się podwójnie. Pusta lista lub group_id=0 nie generuje sceny.
+
+
+## Protokół 3 — 24 endpointy (firmware 2.3.0)
+
+Dwie przestrzenie adresowe obowiązują identycznie na UART D6/D7 i USB-C:
+
+| Przykład | Znaczenie |
+|---|---|
+| CLICK 2 | Fizyczne wejście D1 przez aktualne mapowania |
+| DOUBLE 2 | Dwa naciśnięcia wejścia D1, sklasyfikowane fizycznym dekoderem |
+| HOLD 2 1500 | Przytrzymanie wejścia D1 przez 1500 ms |
+| CLICK EP10 | Jeden klik wirtualnego endpointu 10, z pominięciem źródła i filtra gestu |
+| DOUBLE EP10 / TRIPLE EP10 | Dwa/trzy kliknięcia logicznego EP10, wynik zależy od switch_type |
+| PRESS EP18 / RELEASE EP18 | Wirtualne naciśnięcie/puszczenie endpointu 18 |
+| HOLD EP18 1500 | Przytrzymanie logicznego endpointu 18 przez 1500 ms |
+| SET EP24 ON / SET EP24 OFF | Ustawienie styku endpointu 24; tylko input_mode=rocker |
+| GET 2 | Konfiguracja fizycznego D1: mode/invert/czasy, dozwolone komendy, lista endpointów |
+| GET EP10 | Pełna konfiguracja EP10: działanie, źródło, gest, sceny, priorytet, komendy i gesty logiczne |
+| STATUS EP18 | Binding clusters/control_path oraz stan wirtualny EP18 |
+| RELEASE ALL | Zeruje wirtualne stany obu przestrzeni i zatrzymuje trwające regulacje na wszystkich EP |
+
+Zakres bez prefiksu to 1..8, odpowiada D0/D1/D2/D3/D4/D5/D8/D9.
+Z prefiksem **EP** zakres to 1..24. Wielkość liter ma znaczenie. CLICK 10 jest
+błędem; poprawne jest CLICK EP10. Nie ma dodatkowego pola liczby kanałów w kablu.
+ACK zachowuje adres: `OK CLICK EP10`, `OK RELEASE EP18`; błędny zakres zwraca
+`ERR CHANNEL`, nieobsługiwany tryb `ERR MODE`. Wszystkie formy obsługują @ID.
+Ten sam ID dla CLICK 2 i CLICK EP2 powoduje ID_CONFLICT, bo to różne operacje.
+
+input_source i input_gesture filtrują **tylko fizyczne**/bare-channel wejście.
+Dlatego fizyczny double D1 -> EP10 aktywuje EP10 raz, a DOUBLE EP10 wywołuje
+dwa logiczne naciśnięcia: np. toggle przełączy dwa razy. `source=none` dopuszcza
+sterowanie EP przez serial. PRESS/RELEASE wymagają minimum 100 ms na fazę.
+HOLD ma zakres 600..10000 ms. Gdy wskazujesz fizyczny kanał z odbiorcą hold,
+czas musi być przynajmniej pin_hold_time+100 ms, inaczej ERR DURATION.
+EP HOLD korzysta z logicznego progu 500 ms, niezależnie od ustawień pinu.
+SET wymaga rocker, skróty kliknięć/przytrzymania push. GET/STATUS działają offline.
+
+Stany są wspólne dla obu portów i łączone OR z fizycznym źródłem: RELEASE EP18
+puszcza stan serialowy, ale nie symuluje puszczenia nadal trzymanego fizycznego
+przycisku. RELEASE ALL jest globalnym Stop; nie uruchomi ponownie gestu hold,
+dopóki fizyczne wejście nie zostanie puszczone i ponownie naciśnięte.
+PRESS/SET nadal mają watchdog 10 s. Deduplikacja, kolejki i logi per port pozostają.
+
+INFO zwraca protocol=3, channels=8, endpoints=24 i endpoint_addressing=true.
+STATUS bez argumentu zachowuje dotychczasowy ośmioelementowy widok zgodności;
+bindingi w nim dotyczą EP1..8, a stan styku odpowiada wejściom fizycznym.
+Przy zmienionych mapowaniach używaj STATUS EPn do diagnostyki konkretnego celu.
+Pełny stan 24 EP pobierz osobnymi zapytaniami; pojedyncza odpowiedź nadal ma
+limit 2048 bajtów, więc nie powiększamy kolejek/cache na małym urządzeniu.
+GET bez prefiksu w działającym firmware pokazuje konfigurację **pinu**, nie
+jednego arbitralnego endpointu. Starsze przykłady GET kanału w tym dokumencie
+opisują wersję 2; aktualny odpowiednik konfiguracji logicznej to GET EPn.
+
+Przy fizycznych mappingach single/double/hold komenda TRIPLE bez prefiksu
+wykonuje trzy rzeczywiste kliknięcia; jeśli istnieje odbiorca double, otrzymasz
+double i następnie single. Nie ma osobnej fizycznej trasy triple w wariancie
+24 EP. TRIPLE EPn nadal korzysta z logicznego trybu endpointu (np. multifunction
+raportuje chN_triple). OK oznacza przyjęcie operacji: pin bez przypisanych
+endpointów lub nieaktywny gest danego switch_type może nie wygenerować Zigbee.

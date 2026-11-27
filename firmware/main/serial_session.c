@@ -17,7 +17,7 @@ static void finish(json_t *j) {if(j->failed)snprintf(j->text,j->capacity,"ERR RE
 static void info(const serial_runtime_t *r,char *reply,size_t cap) {
     json_t j={.text=reply,.capacity=cap};
     append(&j,"{\"firmware\":\"%s\",\"protocol\":%u,\"model\":\"XIAO-C6-8CH\","
-        "\"boot_id\":%"PRIu32",\"channels\":8,\"baud\":115200,\"format\":\"8N1\","
+        "\"boot_id\":%"PRIu32",\"channels\":8,\"endpoints\":24,\"endpoint_addressing\":true,\"baud\":115200,\"format\":\"8N1\","
         "\"port\":\"%s\",\"transports\":[\"uart\",\"usb\"],\"logs_enabled\":%s,\"request_ids\":true,\"id_order\":\"increasing\",\"dedup_depth\":%u,\"hold_timeout_ms\":%u,\"commands\":["
         "\"PING\",\"INFO\",\"STATUS\",\"GET\",\"PRESS\",\"RELEASE\",\"CLICK\",\"DOUBLE\","
         "\"TRIPLE\",\"HOLD\",\"SET\",\"RELEASE ALL\",\"RESET\",\"LOG\"]}\n",
@@ -65,7 +65,7 @@ static void status(const serial_session_t *s,const serial_input_t *state,const s
     append(&j,"}}\n");finish(&j);
 }
 static bool same(const serial_command_t *a,const serial_command_t *b) {
-    return a->operation==b->operation && a->channel==b->channel && a->duration==b->duration;
+    return a->endpoint_target==b->endpoint_target && a->operation==b->operation && a->channel==b->channel && a->duration==b->duration;
 }
 serial_effect_t serial_session_execute(serial_session_t *s,serial_input_t *state,const serial_command_t *c,
     uint64_t now,const channel_config_t *cfg,const uint8_t *priority,const serial_runtime_t *r,
@@ -90,7 +90,15 @@ serial_effect_t serial_session_execute(serial_session_t *s,serial_input_t *state
     serial_effect_t effect=SERIAL_EFFECT_NONE;
     size_t payload_cap=cap<SERIAL_REPLY_MAX?cap:SERIAL_REPLY_MAX;
     if(c->operation==SERIAL_INFO)info(r,reply,payload_cap);
-    else if(c->operation==SERIAL_STATUS)status(s,state,r,now,reply,payload_cap);
+    else if(c->operation==SERIAL_STATUS) {
+        if(c->endpoint_target && c->channel<ENDPOINTS) {
+            unsigned ep=c->channel;
+            snprintf(reply,payload_cap,"{\"endpoint\":%u,\"bindings_known\":%s,\"binding_clusters\":%u,\"control_path\":\"%s\",\"virtual\":%s,\"sequence_active\":%s}\n",
+                ep+1,r->bindings_known?"true":"false",r->binding_clusters[ep],
+                (const char *[]) {"binding","z2m","mixed"}[r->control_path[ep]<3?r->control_path[ep]:1],
+                state->endpoint_buttons[ep].down?"true":"false",state->endpoint_buttons[ep].running?"true":"false");
+        } else status(s,state,r,now,reply,payload_cap);
+    }
     else if(c->operation==SERIAL_LOG) {
         snprintf(reply,cap,"OK LOG %u\n",c->duration);
         effect=c->duration?SERIAL_EFFECT_LOG_ON:SERIAL_EFFECT_LOG_OFF;

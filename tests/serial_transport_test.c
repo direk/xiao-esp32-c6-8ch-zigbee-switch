@@ -10,7 +10,7 @@ struct mock_queue {unsigned depth,size,count,head;unsigned char data[SERIAL_EVEN
 static struct mock_queue queues[7];
 static unsigned created;
 static bool zigbee_context;
-static uint8_t priorities[CHANNELS]={1,1,1,1,1,1,1,1};
+static uint8_t priorities[ENDPOINTS]={1,1,1,1,1,1,1,1};
 static void (*task_entry[2])(void *);
 static void *task_args[2];
 static vprintf_like_t log_hook;
@@ -96,8 +96,8 @@ static void enqueue(serial_operation_t op,unsigned channel) {
     serial_command_t c={.operation=op,.channel=channel,.duration=100};assert(xQueueSend(&queues[0],&c,0));
 }
 int main(void) {
-    serial_input_t state={0};channel_config_t cfg[CHANNELS];
-    for(unsigned i=0;i<CHANNELS;++i)channel_defaults(&cfg[i]);
+    serial_input_t state={0};channel_config_t cfg[ENDPOINTS];
+    for(unsigned i=0;i<ENDPOINTS;++i)channel_defaults(&cfg[i]);
     serial_transport_logging_init();serial_transport_start();assert(created==7 && task_entry[0] && task_entry[1]);
     emit_log("off by default\n");usb_slice("");assert(!*usb_outgoing && !*outgoing);
     usb_slice("PING\n");assert(!strcmp(usb_outgoing,"OK PING\n"));usb_outgoing[0]=0;
@@ -241,5 +241,13 @@ int main(void) {
     usb_partial=20;usb_slice("");assert(strlen(usb_outgoing)==20 && !strchr(usb_outgoing,'\n'));
     usb_slice("@6000 INFO\n");poll(&state,cfg,true,1580);usb_slice("");
     assert(usb_outgoing[20]=='\n' && !strncmp(usb_outgoing+21,"@6000 {",7));
+    outgoing[0]=0;usb_outgoing[0]=0;
+    uart_slice("PRESS EP24\n");poll(&state,cfg,true,1600);uart_slice("");
+    assert(state.endpoint_buttons[23].down && !strcmp(outgoing,"OK PRESS EP24\n"));
+    usb_slice("RELEASE EP24\n");poll(&state,cfg,true,1610);usb_slice("");
+    assert(!state.endpoint_buttons[23].down && !strcmp(usb_outgoing,"OK RELEASE EP24\n"));
+    outgoing[0]=0;usb_outgoing[0]=0;
+    usb_slice("GET EP24\n");poll(&state,cfg,true,1620);usb_slice("");assert(strstr(usb_outgoing,"\"endpoint\":24"));
+    uart_slice("STATUS EP24\n");poll(&state,cfg,true,1630);uart_slice("");assert(strstr(outgoing,"\"endpoint\":24"));
     puts("PASS: production UART task/queues, no UART calls in Zigbee, flood/backpressure and deferred ACKs");
 }

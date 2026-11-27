@@ -200,3 +200,94 @@ przypiętej biblioteki 1.6.9 potwierdziła stały krok 21 bajtów, także dla
   fizyczny test rollbacku nie zostały jeszcze wykonane. Użytkownik wybrał
   samodzielny test OTA po podmianie konwertera. Nie należy traktować testów
   formatu i migracji USB jako potwierdzenia transferu radiowego.
+
+
+## Niewydane: switch_actions=on_off
+
+- Test control.c symuluje grupę sześciu lamp z mieszanym stanem i dekoduje
+  rzeczywiste ID komend: 1, 0, 1, 0. Każda komenda ustawia całą grupę zgodnie.
+- Testy sprawdzają debounce, brak powtórzeń przy trzymaniu, osiem niezależnych
+  sekwencji, pierwszy ON po starcie, zachowanie fazy przy rebase i NVS maskę
+  zgodną z poprzednią strukturą konfiguracji.
+- Parser UART współdzieli sekwencję z fizycznym wejściem; ich nakładanie nie
+  generuje podwójnego naciśnięcia. GET zwraca nazwę on_off.
+- Konwerter koduje i odczytuje wartość 3 atrybutu 0x06 na wszystkich ośmiu
+  endpointach. zigbee-herdsman dekoduje ramki control.c jako on/off, bez Toggle.
+- Wszystkie sześć zestawów testów C przeszło z ASan/UBSan; Node: 18 testów
+  przeszło, test dodatkowego katalogu dystrybucji pominięty (brak nowego wydania).
+- Brak testu nowej funkcji na fizycznych lampach; urządzenie nie było resetowane
+  ani programowane podczas trwającego OTA 2.2.0.
+- Oba warianty anteny skompilowane poprawnie od zera: ESP-IDF 5.4.2, Zigbee/ZBOSS 1.6.9.
+
+
+## Lokalna wersja testowa 2.2.1: scene_cycle
+
+- 14 trybów i 8 osobnych list: parser odrzuca duplikaty, uszkodzone ciągi,
+  nieprawidłowe ID, ponad 16 scen i nieprawidłowy znacznik długości ZCL.
+- control.c: rotacja 0/1/3, wrap, debouncing, rebase, restart, brak powtórzeń
+  podczas hold/release, pusta lista i grupa 0, odrębne grupy ośmiu kanałów.
+- Rzeczywiste ramki ZCL z control.c są dekodowane przez zigbee-herdsman jako
+  Recall Scene do grupy 321 ze scenami dokładnie 3→0→1→3.
+- Test UART sprawdza wspólny indeks przy wejściu fizycznym i wirtualnym,
+  nakładające się naciśnięcia oraz HOLD bez dodatkowego wywołania sceny.
+- Test GET sprawdza 128 kompletnych JSON-ów (14 trybów push i 2 rocker,
+  8 kanałów) z maksymalną listą 16 trzycyfrowych ID.
+- NVS: testy kodeka zachowują 16-bajtowy kanał config2, osobne listy i maskę
+  trybu; przy starym config2 listy są puste. Layout 130-bajtowego blobu jest
+  sprawdzany przez kompilator.
+- Konwerter: tekstowe exposes i rzeczywiste kodowanie char string 0x42 na
+  wszystkich kanałach; normalizacja spacji, zapis/odczyt, czyszczenie i walidacja.
+- Wszystkie sześć zestawów C z ASan/UBSan oraz komplet testów Node, w tym
+  dekodowanie obu rzeczywistych obrazów OTA, sprawdzone lokalnie.
+- Warianty internal i external skompilowane przez ESP-IDF 5.4.2, SDK 1.6.9.
+  Wersja aplikacji 2.2.1, wersja OTA 0x02020100, różne imageType anten.
+- Brak publikacji i programowania przez USB. Test radiowy OTA oraz reakcja
+  rzeczywistych lamp na scene_cycle pozostają do wykonania przez użytkownika.
+
+
+## Lokalna wersja testowa 2.2.2: Identify i Diagnostics
+
+- Warianty external/internal: ESP-IDF 5.4.2 i Zigbee SDK 1.6.9. Numer OTA
+  0x02020200, oddzielne typy obrazów C601/C600, brak programowania przez USB.
+- Test C z ASan/UBSan obejmuje GPIO active LOW, dokładne granice 250 ms,
+  przerwanie Identify, ponowny start od zapalonej LED, nasycanie liczników,
+  odróżnienie pierwszego uruchomienia od restartu, zerowanie RAM na start
+  oraz inkrementację wyłącznie lokalnie odrzuconych żądań APS.
+- Test konwertera koduje rzeczywistą komendę genIdentify Identify i standardowy
+  raport haDiagnostic NumberOfResets przez zigbee-herdsman, sprawdza read/get,
+  brak sufiksów kanałów, filtr EP1, reset_reason oraz wartości graniczne uint32.
+- Siedem zestawów C z ASan/UBSan i 22 testy Node obejmujące również oba
+  rzeczywiste pliki OTA i indeksy są walidowane lokalnie.
+- Miganie LED, faktyczne przetrwanie licznika przez fizyczny restart oraz
+  odczyt nowego klastra w prawdziwym Z2M pozostają testami sprzętowymi użytkownika.
+  Testy na komputerze nie potwierdzają odbioru radiowego ani wykonania przez lampy.
+- Nie dodano globalnego przechwytywania potwierdzeń APS, dodatkowego heartbeat,
+  zadań blokujących ani zapisu NVS przy każdej transmisji.
+
+
+## Wersja 2.3.0: 24 endpointy
+
+- 24 niezależne plannery, 8 pinów; test integruje input_router, control i
+  serial_input z debounce, opóźnionym single, rozpoznaniem double i hold
+  oraz drugim naciśnięciem dokładnie na granicy okna wielokliku.
+- Przypadek D1 -> EP2/EP10/EP18: on_off, kolejność scen 3/0/1 i naprzemienne
+  ściemnianie ze Stop. Brak pierwszego kliknięcia podczas double/hold.
+- Boot/rebase z wciśniętym wejściem nie emituje gestu. Test obejmuje współdzielone
+  ustawienia, odrzucenie legacy+decoded/rocker, mapowanie 24 celów jednego pinu,
+  oddzielne fazy ON/OFF oraz odczyt mapy GET fizycznego wejścia.
+- Dekoder raw Mgmt_Bind: pełne 96 rekordów group/unicast, wszystkie cztery
+  klastry, EP1..24, obie kolejności i maski 0xffffff. Zachowana regresja stride
+  14/21 bajtów i walidacja paginacji/uszkodzonych danych.
+- Parser: CLICK/PRESS/RELEASE/DOUBLE/HOLD/SET na dodatkowych EP, granice EP0/25,
+  stały zakres bez prefiksu 1..8, RELEASE ALL i watchdog. Sesje rozróżniają
+  CLICK 2 od CLICK EP2 przy tym samym @ID. STATUS EP24 i GET EP24 są odczytywane.
+- Test produkcyjnego transportu wysyła PRESS EP24 przez UART i RELEASE EP24
+  przez USB; GET/STATUS EP24 wracają właściwym portem. Zachowane granice kolejek
+  i niezależność logów/deduplikacji obu portów.
+- Z2M: prawdziwe ZCL uint8/bool/uint16 dla map, pinów i priorytetów, source D9,
+  endpointy 1..24 i 456 akcji; kontrola braku D6/D7 w wyborze źródła.
+- Osiem zestawów C z ASan/UBSan i 23 testy Node (wraz z oboma rzeczywistymi
+  obrazami OTA) są sprawdzane lokalnie. Obie anteny kompilowane przez IDF 5.4.2.
+- Pełna migracja 24 endpointów na żywym stosie Zigbee, nowy Interview Z2M,
+  rzeczywisty zapis NVS przez zanik zasilania i sprzętowe bindingi 24 EP są
+  testami użytkownika. Nie wykonano flashowania ani transferu OTA przez agenta.

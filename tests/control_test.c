@@ -22,7 +22,7 @@ int main(void) {
         assert(binding_mask_add(0,ep,CL_LEVEL,3,true,true)==0);
         assert(binding_mask_add(0,ep,CL_LEVEL,3,false,false)==0);
     }
-    assert(binding_mask_add(0,9,CL_LEVEL,3,true,false)==0);
+    assert(binding_mask_add(0,25,CL_LEVEL,3,true,false)==0);
     assert(binding_mask_add(0,1,0x9999,3,true,false)==0);
     binding_scan_t scan={0};assert(binding_scan_page(&scan,0,0,0,0)==1);
     scan=(binding_scan_t){0};assert(binding_scan_page(&scan,0,4,2,0x80)==0);
@@ -36,7 +36,7 @@ int main(void) {
     assert(!poll(false,100));assert(poll(false,135)&&cmd.id==0);
     // Both boot positions, all channels and switch_actions: each stable edge is Toggle.
     for(unsigned boot=0;boot<2;++boot)
-    for(unsigned action=ACT_OFF;action<=ACT_TOGGLE;++action) {
+    for(unsigned action=ACT_OFF;action<=SWITCH_ACTION_ON_OFF;++action) {
         setup(MODE_TOGGLE);c.input_mode=INPUT_ROCKER;c.switch_action=action;
         button_init(&b,boot,0);assert(!poll(boot,500)); // No command on boot.
         assert(!poll(!boot,510));assert(!poll(boot,520));assert(!poll(!boot,530));
@@ -59,7 +59,7 @@ int main(void) {
     assert(poll(true,545)&&cmd.action==ACT_HOLD);assert(!poll(true,900));
     assert(!poll(false,1000));assert(poll(false,1035)&&cmd.action==ACT_RELEASE);
     for(unsigned mode=MODE_LEVEL;mode<MODE_COUNT;++mode) {
-        if(mode>=MODE_COLOR && mode<=MODE_SCENE)continue;
+        if((mode>=MODE_COLOR && mode<=MODE_SCENE) || mode==MODE_SCENE_CYCLE)continue;
         setup(mode);click(10);
         bool single=poll(false,545);
         assert(single==(mode<MODE_LEVEL_NO_ONOFF));
@@ -113,6 +113,90 @@ int main(void) {
     for(unsigned ep=0;ep<CHANNELS;++ep) {
         assert(button_poll(&independent[ep],(ep%2)!=0,&c,640,&cmd));assert(cmd.id==2);
     }
+    // Alternating explicit commands synchronize a mixed group, without Toggle.
+    setup(MODE_TOGGLE);c.switch_action=SWITCH_ACTION_ON_OFF;assert(channel_valid(&c));
+    bool bulbs[6]={true,false,true,false,true,false};
+    for(unsigned n=0;n<4;++n) {
+        uint64_t t=10+n*1200;
+        press(t);assert(!poll(false,t+10));press(t+20); // Contact bounce cannot advance phase.
+        assert(!poll(true,t+54));assert(poll(true,t+55));
+        assert(cmd.cluster==CL_ONOFF && cmd.id==(n%2 ? ACT_OFF : ACT_ON));
+        uint8_t wire[3];assert(command_frame(&cmd,42,wire,sizeof(wire))==3);
+        assert(wire[2]==cmd.id && cmd.action==cmd.id);
+        for(unsigned lamp=0;lamp<6;++lamp)bulbs[lamp]=wire[2]==ACT_ON;
+        for(unsigned lamp=0;lamp<6;++lamp)assert(bulbs[lamp]==(n%2==0));
+        assert(!poll(true,t+800));assert(!poll(false,t+900));assert(!poll(false,t+935));
+    }
+    // A config rebase preserves phase; boot/reinitialization resets to first ON.
+    press(5000);assert(poll(true,5035)&&cmd.id==ACT_ON);
+    button_rebase(&b,false,5100);press(5200);assert(poll(true,5235)&&cmd.id==ACT_OFF);
+    button_init(&b,true,5300);assert(!poll(true,6000));
+    assert(!poll(false,6100));assert(!poll(false,6135));
+    press(6200);assert(poll(true,6235)&&cmd.id==ACT_ON);
+    setup(MODE_MOMENTARY);c.switch_action=SWITCH_ACTION_ON_OFF;
+    press(10);assert(poll(true,45)&&cmd.id==ACT_ON);
+    assert(!poll(false,100));assert(poll(false,135)&&cmd.id==ACT_OFF);
+    channel_config_t live[CHANNELS],saved[CHANNELS];button_t phases[CHANNELS];
+    for(unsigned i=0;i<CHANNELS;++i) {
+        channel_defaults(&live[i]);live[i].switch_action=SWITCH_ACTION_ON_OFF;
+        button_init(&phases[i],false,0);
+    }
+    for(unsigned round=0;round<2;++round)for(unsigned j=0;j<CHANNELS;++j) {
+        unsigned i=(j*3)%CHANNELS;uint64_t t=10+round*200;
+        assert(!button_poll(&phases[i],true,&live[i],t,&cmd));
+        assert(button_poll(&phases[i],true,&live[i],t+35,&cmd));
+        assert(cmd.id==(round ? ACT_OFF : ACT_ON));
+        assert(!button_poll(&phases[i],false,&live[i],t+70,&cmd));
+        assert(!button_poll(&phases[i],false,&live[i],t+105,&cmd));
+    }
+    live[2].switch_action=ACT_ON;live[5].switch_action=ACT_OFF;
+    uint8_t mask=channel_actions_store(live,saved);assert(mask==(uint8_t)~((1U<<2)|(1U<<5)));
+    for(unsigned i=0;i<CHANNELS;++i)assert(saved[i].switch_action<=ACT_TOGGLE && channel_valid(&saved[i]));
+    channel_actions_restore(saved,mask);assert(!memcmp(live,saved,sizeof(live)));
+    channel_actions_restore(saved,0xff);assert(saved[2].switch_action==ACT_ON && saved[5].switch_action==ACT_OFF);
+    c.switch_action=4;assert(!channel_valid(&c));
+    // Scene cycle: explicit group payload, order, wrap, bounce/hold/release and independent channels.
+    setup(MODE_SCENE_CYCLE);c.scene_group=10;
+    memcpy(c.scene_list,"\0050,1,3",6);assert(channel_valid(&c));
+    for(unsigned mask=0;mask<16;++mask)assert(channel_control_path(&c,mask)==0);
+    for(unsigned n=0;n<7;++n) {
+        uint64_t t=10+n*1200;press(t);assert(!poll(true,t+34));assert(poll(true,t+35));
+        assert(cmd.cluster==CL_SCENES && cmd.id==5 && cmd.group==10 && cmd.length==3);
+        assert(cmd.data[0]==10 && cmd.data[1]==0 && cmd.data[2]==((uint8_t[]){0,1,3})[n%3]);
+        assert(cmd.action==ACT_SCENE && command_direct(&cmd,false));
+        assert(!command_reports(&cmd,false,true) && command_reports(&cmd,false,false));
+        assert(!poll(true,t+900));assert(!poll(false,t+950));assert(!poll(false,t+985));
+    }
+    button_rebase(&b,false,8500);press(8600);assert(poll(true,8635)&&cmd.data[2]==1);
+    button_init(&b,false,8700);press(8800);assert(poll(true,8835)&&cmd.data[2]==0);
+    for(unsigned i=0;i<CHANNELS;++i) {
+        live[i]=c;live[i].scene_group=100+i;button_init(&phases[i],false,0);
+        assert(!button_poll(&phases[i],true,&live[i],10,&cmd));
+        assert(button_poll(&phases[i],true,&live[i],45,&cmd));assert(cmd.group==100+i && cmd.data[2]==0);
+    }
+    c.scene_list[0]=0;assert(channel_control_path(&c,15)==1);button_init(&b,false,0);press(10);assert(!poll(true,45));assert(!poll(true,900));
+    memcpy(c.scene_list,"\0053,0,1",6);c.scene_group=0;assert(channel_control_path(&c,15)==1);button_init(&b,false,0);press(10);assert(!poll(true,45));assert(!poll(true,900));
+    uint8_t ids[SCENE_LIST_MAX],count,text[SCENE_LIST_BYTES]={0};
+    const char *bad_lists[]={",","1,","1,,2","-1","256","0,0","1,01","1 2","a","1, 2","0000"};
+    for(unsigned i=0;i<sizeof(bad_lists)/sizeof(*bad_lists);++i) {
+        text[0]=strlen(bad_lists[i]);memcpy(text+1,bad_lists[i],text[0]);assert(!scene_list_parse(text,ids,&count));
+    }
+    text[0]=64;assert(!scene_list_parse(text,ids,&count));text[0]=255;assert(!scene_list_parse(text,ids,&count));
+    const char *maximum="240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255";
+    text[0]=strlen(maximum);memcpy(text+1,maximum,text[0]);assert(scene_list_parse(text,ids,&count)&&count==16&&ids[15]==255);
+    const char *too_many="0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16";
+    text[0]=strlen(too_many);memcpy(text+1,too_many,text[0]);assert(!scene_list_parse(text,ids,&count));
+    live[3].switch_action=SWITCH_ACTION_ON_OFF;
+    uint8_t actions_mask=channel_actions_store(live,saved);assert(actions_mask==8);
+    channel_config_v2_t legacy[CHANNELS];uint8_t lists[CHANNELS][SCENE_LIST_BYTES];
+    for(unsigned i=0;i<CHANNELS;++i)memcpy(lists[i],live[i].scene_list,SCENE_LIST_BYTES);
+    uint8_t cycle=channel_legacy_store(live,legacy);assert(cycle==255);
+    for(unsigned i=0;i<CHANNELS;++i)assert(legacy[i].function==MODE_SCENE && legacy[i].switch_action<=ACT_TOGGLE);
+    channel_legacy_restore(saved,legacy,lists,cycle);
+    channel_actions_restore(saved,actions_mask);assert(saved[3].switch_action==SWITCH_ACTION_ON_OFF);
+    for(unsigned i=0;i<CHANNELS;++i)assert(saved[i].function==MODE_SCENE_CYCLE && saved[i].scene_group==100+i && !memcmp(saved[i].scene_list,lists[i],SCENE_LIST_BYTES));
+    channel_legacy_restore(saved,legacy,NULL,0);
+    for(unsigned i=0;i<CHANNELS;++i)assert(saved[i].function==MODE_SCENE && !saved[i].scene_list[0] && channel_valid(&saved[i]));
     // Full routing matrix: priority changes action reporting, never direct delivery.
     for(unsigned report=0;report<2;++report)
     for(unsigned bound=0;bound<2;++bound)
@@ -123,5 +207,5 @@ int main(void) {
         assert(command_direct(&route,bound)==direct);
         assert(command_reports(&route,bound,priority)==(!direct || !priority));
     }
-    puts("PASS: eight endpoints, per-cluster bindings, debounce, 13 modes, clicks/holds/releases and safe raw ZCL frames");
+    puts("PASS: eight endpoints, per-cluster bindings, debounce, 14 modes, clicks/holds/releases and safe raw ZCL frames");
 }

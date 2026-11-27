@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "serial_input.h"
-#define SERIAL_PROTOCOL_VERSION 2
+#define SERIAL_PROTOCOL_VERSION 3
 #define SERIAL_DEDUP_DEPTH 16
 
 typedef struct {
@@ -21,7 +21,7 @@ typedef struct {
     uint32_t boot_id;
     bool joined, bindings_known, factory_new, reset_pending;
     uint16_t short_address;
-    uint8_t physical_mask, binding_clusters[CHANNELS], control_path[CHANNELS];
+    uint8_t physical_mask, binding_clusters[ENDPOINTS], control_path[ENDPOINTS];
     serial_uart_stats_t uart;
     unsigned command_queue_used, reply_queue_used;
 } serial_runtime_t;

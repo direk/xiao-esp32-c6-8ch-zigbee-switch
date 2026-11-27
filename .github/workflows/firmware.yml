@@ -21,6 +21,8 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npm test
+          npm run test:device
+          npm run test:router
       - name: Test binding table decoder
         shell: bash
         run: |
@@ -51,6 +53,7 @@ jobs:
             dist/SHA256SUMS
             dist/*.zigbee
             dist/ota-index.json
+            dist/ota-index-local.json
             dist/bootloader.bin
             dist/partition-table.bin
             dist/ota-data-initial.bin

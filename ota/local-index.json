@@ -1,0 +1,34 @@
+[
+  {
+    "manufacturerCode": 4891,
+    "imageType": 50689,
+    "fileVersion": 33751040,
+    "fileName": "xiao-8ch-v2.3.0-external.zigbee",
+    "fileSize": 689746,
+    "modelId": "XIAO-C6-8CH",
+    "manufacturerName": [
+      "DIY-XIAO"
+    ],
+    "hardwareVersionMin": 1,
+    "hardwareVersionMax": 1,
+    "sha512": "186191c4291a2306834218aaaf4b353e259e401b0bf030233fbcf6d131282da3c7572ed6ee5eec846e35db8229ef623ae09e763de776cb261c694fdf83c529c6",
+    "url": "xiao-8ch-v2.3.0-external.zigbee",
+    "releaseNotes": "https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch/releases/tag/v2.3.0"
+  },
+  {
+    "manufacturerCode": 4891,
+    "imageType": 50688,
+    "fileVersion": 33751040,
+    "fileName": "xiao-8ch-v2.3.0-internal.zigbee",
+    "fileSize": 689746,
+    "modelId": "XIAO-C6-8CH",
+    "manufacturerName": [
+      "DIY-XIAO"
+    ],
+    "hardwareVersionMin": 1,
+    "hardwareVersionMax": 1,
+    "sha512": "95637950fc89f8f093b10454599b22565a056ecbd982decf8a601edf6994acec03455025ff8e833850bb0fd55d710720a181bc2220037b72a24db9e375465fb9",
+    "url": "xiao-8ch-v2.3.0-internal.zigbee",
+    "releaseNotes": "https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch/releases/tag/v2.3.0"
+  }
+]

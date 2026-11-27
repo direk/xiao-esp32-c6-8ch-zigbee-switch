@@ -3,7 +3,8 @@
 #include "control.h"
 
 typedef struct {
-    uint8_t tsn, index, total, count, mask, clusters[4];
+    uint8_t tsn, index, total, count;
+    uint32_t mask, clusters[4];
 } binding_page_t;
 
 // Decode a complete Mgmt_Bind_rsp ASDU (including TSN). Output is atomic.

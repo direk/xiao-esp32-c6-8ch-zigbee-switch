@@ -5,25 +5,25 @@
 #include "serial_input.h"
 static serial_input_t serial;
 static serial_parser_t parser;
-static channel_config_t cfg[CHANNELS];
-static button_t buttons[CHANNELS];
+static channel_config_t cfg[ENDPOINTS];
+static button_t buttons[ENDPOINTS];
 static bool physical[CHANNELS];
-static unsigned events[CHANNELS][ACT_COUNT];
+static unsigned events[ENDPOINTS][ACT_COUNT];
 static uint64_t now;
-static uint8_t priorities[CHANNELS]={1,1,1,1,1,1,1,1};
+static uint8_t priorities[ENDPOINTS]={1,1,1,1,1,1,1,1};
 static char response[SERIAL_REPLY_MAX];
 static void reset(void) {
     memset(&parser,0,sizeof(parser));
     memset(&serial,0,sizeof(serial));memset(physical,0,sizeof(physical));
     memset(events,0,sizeof(events));now=0;
-    for(unsigned i=0;i<CHANNELS;++i) {channel_defaults(&cfg[i]);button_init(&buttons[i],false,0);}
+    for(unsigned i=0;i<ENDPOINTS;++i) {channel_defaults(&cfg[i]);button_init(&buttons[i],false,0);}
 }
 static void advance(unsigned ms) {
     for(unsigned t=0;t<ms;t+=10) {
         now+=10;serial_input_tick(&serial,now);
-        for(unsigned i=0;i<CHANNELS;++i) {
+        for(unsigned i=0;i<ENDPOINTS;++i) {
             command_t command;
-            if(button_poll(&buttons[i],physical[i]||serial.buttons[i].down,&cfg[i],now,&command))
+            if(button_poll(&buttons[i],(i<CHANNELS && (physical[i]||serial.buttons[i].down))||serial.endpoint_buttons[i].down,&cfg[i],now,&command))
                 ++events[i][command.action];
         }
     }
@@ -112,5 +112,42 @@ int main(void) {
     assert(!serial.buttons[0].down && serial.buttons[0].remaining==2);
     // Input arrives in fragments; no command is applied before LF.
     reset();send("PRESS 8","");assert(!serial.buttons[7].down);send("\r\n","OK PRESS 8\n");assert(serial.buttons[7].down);
+    reset();cfg[0].switch_action=SWITCH_ACTION_ON_OFF;
+    send("CLICK 1\n","OK CLICK 1\n");advance(300);
+    assert(events[0][ACT_ON]==1 && !events[0][ACT_OFF] && !events[0][ACT_TOGGLE]);
+    physical[0]=true;advance(100); // Same channel/phase for physical and serial input.
+    assert(events[0][ACT_OFF]==1);
+    send("PRESS 1\n","OK PRESS 1\n");advance(100);
+    physical[0]=false;advance(100);assert(events[0][ACT_ON]==1);
+    send("RELEASE 1\n","OK RELEASE 1\n");advance(100);
+    send("CLICK 1\n","OK CLICK 1\n");advance(300);assert(events[0][ACT_ON]==2 && events[0][ACT_OFF]==1);
+    reset();cfg[0].function=MODE_SCENE_CYCLE;cfg[0].scene_group=10;
+    memcpy(cfg[0].scene_list,"\0050,1,3",6);
+    send("CLICK 1\n","OK CLICK 1\n");advance(300);assert(events[0][ACT_SCENE]==1 && buttons[0].scene_index==1);
+    physical[0]=true;advance(100);assert(events[0][ACT_SCENE]==2 && buttons[0].scene_index==2);
+    send("PRESS 1\n","OK PRESS 1\n");advance(100);physical[0]=false;advance(100);
+    assert(events[0][ACT_SCENE]==2);
+    send("RELEASE 1\n","OK RELEASE 1\n");advance(100);
+    send("HOLD 1 1000\n","OK HOLD 1\n");advance(1300);
+    assert(events[0][ACT_SCENE]==3 && buttons[0].scene_index==0 && !events[0][ACT_LEVEL_UP]);
+    cfg[0].scene_list[0]=0;send("CLICK 1\n","OK CLICK 1\n");advance(300);assert(events[0][ACT_SCENE]==3);
+    reset();
+    for(unsigned ep=1;ep<=ENDPOINTS;++ep) {
+        char request[40],reply[40];snprintf(request,sizeof(request),"CLICK EP%u\n",ep);snprintf(reply,sizeof(reply),"OK CLICK EP%u\n",ep);
+        send(request,reply);advance(300);assert(events[ep-1][ACT_TOGGLE]==1);
+    }
+    send("CLICK EP25\n","ERR CHANNEL\n");send("CLICK EP0\n","ERR CHANNEL\n");send("CLICK 9\n","ERR CHANNEL\n");
+    send("PRESS EP24\n","OK PRESS EP24\n");advance(100);send("PRESS EP24\n","OK PRESS EP24\n");advance(100);
+    assert(events[23][ACT_TOGGLE]==2);send("RELEASE EP24\n","OK RELEASE EP24\n");advance(100);
+    send("DOUBLE EP24\n","OK DOUBLE EP24\n");advance(700);assert(events[23][ACT_TOGGLE]==4);
+    send("SET EP24 ON\n","ERR MODE\n");cfg[23].input_mode=INPUT_ROCKER;cfg[23].function=MODE_MOMENTARY;
+    send("SET EP24 ON\n","OK SET EP24\n");advance(100);assert(events[23][ACT_ON]==1);
+    send("SET EP24 OFF\n","OK SET EP24\n");advance(100);assert(events[23][ACT_OFF]==1);
+    cfg[23].input_mode=INPUT_PUSH;cfg[23].function=MODE_MULTIFUNCTION;
+    send("TRIPLE EP24\n","OK TRIPLE EP24\n");advance(1300);assert(events[23][ACT_TRIPLE]==1);
+    cfg[17].function=MODE_LEVEL_UP;send("HOLD EP18 1000\n","OK HOLD EP18\n");advance(1400);
+    assert(events[17][ACT_LEVEL_UP]==1 && events[17][ACT_LEVEL_STOP]==1);
+    send("PRESS EP18\n","OK PRESS EP18\n");advance(700);send("RELEASE ALL\n","OK RELEASE ALL\n");advance(100);
+    assert(!serial.endpoint_buttons[17].down && events[17][ACT_LEVEL_STOP]==2 && serial.release_all);
     puts("PASS: UART parser, eight channels, gestures, rocker, watchdog, cancellation, physical OR and invalid input");
 }

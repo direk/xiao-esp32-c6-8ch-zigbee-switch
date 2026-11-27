@@ -6,17 +6,17 @@
 static serial_session_t session;
 static serial_input_t state;
 static serial_runtime_t runtime;
-static channel_config_t cfg[CHANNELS];
-static uint8_t priority[CHANNELS];
+static channel_config_t cfg[ENDPOINTS];
+static uint8_t priority[ENDPOINTS];
 static char reply[SERIAL_WIRE_MAX];
 static unsigned resets;
 static bool reset_fails;
 static bool reset_callback(void *unused) {(void)unused;++resets;return !reset_fails;}
 static void init(void) {
     memset(&session,0,sizeof(session));memset(&state,0,sizeof(state));resets=0;reset_fails=false;
-    runtime=(serial_runtime_t){.firmware_version="2.2.0",.antenna="internal",.ota_enabled=true,.ota_manufacturer=0x131b,.ota_image_type=0xc600,
-        .ota_file_version=0x02020000,.ota_slot="ota_1",.ota_state="downloading",.ota_received=UINT32_MAX,.ota_total=UINT32_MAX,.boot_id=UINT32_MAX,.joined=true,.bindings_known=true,.short_address=0xabcd};
-    for(unsigned i=0;i<CHANNELS;++i) {channel_defaults(&cfg[i]);priority[i]=1;}
+    runtime=(serial_runtime_t){.firmware_version="2.3.0",.antenna="internal",.ota_enabled=true,.ota_manufacturer=0x131b,.ota_image_type=0xc600,
+        .ota_file_version=0x02030000,.ota_slot="ota_1",.ota_state="downloading",.ota_received=UINT32_MAX,.ota_total=UINT32_MAX,.boot_id=UINT32_MAX,.joined=true,.bindings_known=true,.short_address=0xabcd};
+    for(unsigned i=0;i<ENDPOINTS;++i) {channel_defaults(&cfg[i]);priority[i]=1;}
 }
 static bool request(const char *line) {
     serial_parser_t parser={0};serial_command_t command={0};bool started=false;
@@ -60,9 +60,9 @@ int main(int argc,char **argv) {
     request("@7 HOLD 2 9999999999999999999\n");assert(!strcmp(reply,"@7 ERR DURATION\n"));
     request("@7\n");assert(!strcmp(reply,"@7 ERR SYNTAX\n"));request("RESET ALL\n");assert(!strcmp(reply,"ERR SYNTAX\n") && !resets);
     runtime.joined=false;runtime.bindings_known=false;
-    request("INFO\n");assert(strstr(reply,"\"protocol\":2") && strstr(reply,"\"firmware\":\"2.2.0\""));
+    request("INFO\n");assert(strstr(reply,"\"protocol\":3") && strstr(reply,"\"firmware\":\"2.3.0\""));
     request("STATUS\n");assert(strstr(reply,"\"joined\":false") && strstr(reply,"\"short_address\":null"));
-    channel_config_t saved[CHANNELS];memcpy(saved,cfg,sizeof(saved));uint8_t saved_priority[CHANNELS];memcpy(saved_priority,priority,sizeof(priority));
+    channel_config_t saved[CHANNELS];memcpy(saved,cfg,sizeof(saved));uint8_t saved_priority[ENDPOINTS];memcpy(saved_priority,priority,sizeof(priority));
     reset_fails=true;assert(!request("@100 RESET\n") && !strcmp(reply,"@100 ERR STORAGE\n"));
     reset_fails=false;assert(request("@101 RESET\n") && !strcmp(reply,"@101 OK RESET\n"));
     assert(resets==2);runtime.reset_pending=true;
@@ -79,5 +79,8 @@ int main(int argc,char **argv) {
     request("@1 PRESS 1\n");assert(!state.buttons[0].down && session.duplicates==0 && session.id_expired==1);
     assert(!strcmp(reply,"@1 ERR ID_EXPIRED\n"));
     request("@2 PRESS 1\n");assert(!strcmp(reply,"@2 ERR ID_CONFLICT\n") && !state.buttons[0].down);
+    init();request("@50 CLICK 2\n");request("@50 CLICK EP2\n");assert(strstr(reply,"ERR ID_CONFLICT"));
+    request("GET EP24\n");assert(strstr(reply,"\"endpoint\":24"));
+    request("STATUS EP24\n");assert(strstr(reply,"\"endpoint\":24") && strstr(reply,"binding_clusters"));
     puts("PASS: session IDs, exact replay, conflicts, bounded cache, INFO/STATUS, RESET callback/ACK gating and config preservation");
 }

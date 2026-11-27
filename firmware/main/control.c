@@ -2,30 +2,103 @@
 #include "control.h"
 #include <string.h>
 
+bool scene_list_parse(const uint8_t *text, uint8_t *ids, uint8_t *count) {
+    *count=0;
+    unsigned length=text[0];
+    if(length>=SCENE_LIST_BYTES)return false;
+    for(unsigned pos=1;pos<=length;) {
+        unsigned value=0,digits=0;
+        while(pos<=length && text[pos]>='0' && text[pos]<='9') {
+            value=value*10+(text[pos++]-'0');
+            if(++digits>3 || value>255)return false;
+        }
+        if(!digits || *count>=SCENE_LIST_MAX)return false;
+        for(unsigned i=0;i<*count;++i)if(ids[i]==value)return false;
+        ids[(*count)++]=(uint8_t)value;
+        if(pos<=length && (text[pos++]!=',' || pos>length))return false;
+    }
+    return true;
+}
+uint8_t channel_legacy_store(const channel_config_t *channels, channel_config_v2_t *saved) {
+    uint8_t mask=0;
+    for(unsigned i=0;i<CHANNELS;++i) {
+        memcpy(&saved[i],&channels[i],sizeof(saved[i]));
+        if(saved[i].function==MODE_SCENE_CYCLE) {mask|=1U<<i;saved[i].function=MODE_SCENE;}
+        if(saved[i].switch_action==SWITCH_ACTION_ON_OFF)saved[i].switch_action=ACT_TOGGLE;
+    }
+    return mask;
+}
+void channel_legacy_restore(channel_config_t *channels, const channel_config_v2_t *saved,
+                           const uint8_t lists[CHANNELS][SCENE_LIST_BYTES], uint8_t cycle_mask) {
+    for(unsigned i=0;i<CHANNELS;++i) {
+        channel_defaults(&channels[i]);
+        memcpy(&channels[i],&saved[i],sizeof(saved[i]));
+        if(lists)memcpy(channels[i].scene_list,lists[i],SCENE_LIST_BYTES);
+        if((cycle_mask & (1U<<i)) && channels[i].function==MODE_SCENE && channels[i].input_mode==INPUT_PUSH)
+            channels[i].function=MODE_SCENE_CYCLE;
+    }
+}
 void channel_defaults(channel_config_t *c) {
     *c = (channel_config_t){.switch_action=ACT_TOGGLE, .min_level=1, .max_level=254,
         .transition_time=25, .color_min=153, .color_max=500};
 }
 bool channel_valid(const channel_config_t *c) {
-    return c->input_mode <= INPUT_ROCKER && c->invert <= 1 && c->function < MODE_COUNT &&
-        c->switch_action <= ACT_TOGGLE && c->min_level >= 1 && c->max_level <= 254 &&
+    uint8_t ids[SCENE_LIST_MAX],count;
+    return scene_list_parse(c->scene_list,ids,&count) && c->input_source<=SOURCE_D9 && c->input_gesture<=GESTURE_HOLD && c->input_mode <= INPUT_ROCKER && c->invert <= 1 && c->function < MODE_COUNT &&
+        c->switch_action <= SWITCH_ACTION_ON_OFF && c->min_level >= 1 && c->max_level <= 254 &&
         c->min_level <= c->max_level && c->transition_time <= 600 &&
         c->color_min >= 1 && c->color_min <= c->color_max && c->color_max <= 1000 &&
         c->scene_group <= 0xfff7 && (c->input_mode != INPUT_ROCKER || c->function <= MODE_MOMENTARY);
 }
+uint8_t channel_control_path(const channel_config_t *c, uint8_t mask) {
+    uint8_t function=c->function;
+    if(function==MODE_SCENE_CYCLE)return c->scene_group && c->scene_list[0] ? 0 : 1;
+    uint8_t needed=function<=MODE_MOMENTARY ? 1 : function==MODE_MULTIFUNCTION ? 0 :
+        function==MODE_SCENE ? 8 : (function>=MODE_COLOR && function<=MODE_COLOR_DOWN) ? 4 :
+        function>=MODE_LEVEL_NO_ONOFF ? 2 : 3;
+    uint8_t available=mask & needed;
+    return (function==MODE_SCENE && c->scene_group) || (needed && available==needed) ? 0 : available ? 2 : 1;
+}
 void button_init(button_t *s, bool active, uint64_t now) {
     *s = (button_t){.raw=active, .stable=active, .changed_ms=now};
+}
+void button_rebase(button_t *s, bool active, uint64_t now) {
+    bool phase=s->on_off_next_off;
+    uint8_t scene_index=s->scene_index;
+    button_init(s,active,now);
+    s->on_off_next_off=phase;
+    s->scene_index=scene_index;
+}
+uint8_t channel_actions_store(const channel_config_t *channels, channel_config_t *saved) {
+    memcpy(saved,channels,CHANNELS*sizeof(*saved));
+    uint8_t mask=0;
+    for(unsigned i=0;i<CHANNELS;++i)if(saved[i].switch_action==SWITCH_ACTION_ON_OFF) {
+        mask|=1U<<i;
+        saved[i].switch_action=ACT_TOGGLE;
+    }
+    return mask;
+}
+void channel_actions_restore(channel_config_t *channels, uint8_t mask) {
+    for(unsigned i=0;i<CHANNELS;++i)
+        if((mask & (1U<<i)) && channels[i].switch_action==ACT_TOGGLE)
+            channels[i].switch_action=SWITCH_ACTION_ON_OFF;
 }
 static void base(command_t *o, uint16_t cluster, uint8_t id, uint8_t action) {
     *o = (command_t){.cluster=cluster, .id=id, .action=action};
 }
 static void u16(uint8_t *p, uint16_t v) { p[0]=v; p[1]=v>>8; }
-static bool no_onoff(uint8_t mode) { return mode >= MODE_LEVEL_NO_ONOFF; }
+static bool no_onoff(uint8_t mode) { return mode >= MODE_LEVEL_NO_ONOFF && mode <= MODE_LEVEL_DOWN_NO_ONOFF; }
 static bool is_level(uint8_t mode) { return (mode>=MODE_LEVEL && mode<=MODE_LEVEL_DOWN) || no_onoff(mode); }
 static bool alternate(uint8_t mode) { return mode==MODE_LEVEL || mode==MODE_LEVEL_NO_ONOFF || mode==MODE_COLOR; }
 static bool fixed_down(uint8_t mode) { return mode==MODE_LEVEL_DOWN || mode==MODE_LEVEL_DOWN_NO_ONOFF || mode==MODE_COLOR_DOWN; }
 static void report(command_t *o, uint8_t action) { base(o,0,0,action); o->report_only=true; }
 static void onoff(command_t *o, uint8_t id) { base(o,CL_ONOFF,id,id); }
+static uint8_t push_action(button_t *s, const channel_config_t *c) {
+    if(c->switch_action!=SWITCH_ACTION_ON_OFF)return c->switch_action;
+    uint8_t action=s->on_off_next_off ? ACT_OFF : ACT_ON;
+    s->on_off_next_off=!s->on_off_next_off;
+    return action;
+}
 static void options(command_t *o, bool nooff) {
     if (nooff) { o->data[o->length++]=1; o->data[o->length++]=0; } // ExecuteIfOff mask=1, override=0.
 }
@@ -95,17 +168,27 @@ bool button_poll(button_t *s, bool active, const channel_config_t *c, uint64_t n
         }
         if (s->stable) {
             s->pressed_ms=now; s->armed=true;
-            if (c->function<=MODE_MOMENTARY) { onoff(o,c->switch_action); return true; }
-            if (c->function==MODE_SCENE) {
+            if (c->function<=MODE_MOMENTARY) { onoff(o,push_action(s,c)); return true; }
+            if (c->function==MODE_SCENE || c->function==MODE_SCENE_CYCLE) {
+                uint8_t scene=c->scene_id;
+                if(c->function==MODE_SCENE_CYCLE) {
+                    uint8_t ids[SCENE_LIST_MAX],count;
+                    if(!c->scene_group || !scene_list_parse(c->scene_list,ids,&count) || !count)return false;
+                    scene=ids[s->scene_index%count];s->scene_index=(s->scene_index+1)%count;
+                }
                 base(o,CL_SCENES,0x05,ACT_SCENE); o->group=c->scene_group;
-                u16(o->data,c->scene_group); o->data[2]=c->scene_id; o->length=3; return true;
+                u16(o->data,c->scene_group); o->data[2]=scene; o->length=3; return true;
             }
         } else {
             if (!s->armed) return false;
             s->armed=false;
-            if (c->function==MODE_MOMENTARY) { onoff(o,c->switch_action==ACT_TOGGLE ? ACT_TOGGLE : (c->switch_action^1)); return true; }
+            if (c->function==MODE_MOMENTARY) {
+                onoff(o,c->switch_action==SWITCH_ACTION_ON_OFF ? push_action(s,c) :
+                        c->switch_action==ACT_TOGGLE ? ACT_TOGGLE : (c->switch_action^1));
+                return true;
+            }
             if (s->holding) return button_cancel(s,o);
-            if (c->function>=MODE_MULTIFUNCTION && c->function!=MODE_SCENE && s->clicks<4) ++s->clicks;
+            if (c->function>=MODE_MULTIFUNCTION && c->function!=MODE_SCENE && c->function!=MODE_SCENE_CYCLE && s->clicks<4) ++s->clicks;
         }
     }
     if (s->stable && s->armed && !s->holding && now-s->pressed_ms>=GESTURE_MS && c->function>=MODE_MULTIFUNCTION) {
@@ -126,11 +209,11 @@ size_t command_frame(const command_t *c, uint8_t sequence, uint8_t *out, size_t 
 int binding_cluster_index(uint16_t cluster) {
     switch (cluster) { case CL_ONOFF:return 0; case CL_LEVEL:return 1; case CL_COLOR:return 2; case CL_SCENES:return 3; default:return -1; }
 }
-uint8_t binding_mask_add(uint8_t mask, uint8_t endpoint, uint16_t cluster, uint8_t mode, bool local, bool excluded) {
-    if (local && !excluded && binding_cluster_index(cluster)>=0 && endpoint>=1 && endpoint<=CHANNELS && (mode==1 || mode==3)) mask|=(uint8_t)(1U<<(endpoint-1));
+uint32_t binding_mask_add(uint32_t mask, uint8_t endpoint, uint16_t cluster, uint8_t mode, bool local, bool excluded) {
+    if (local && !excluded && binding_cluster_index(cluster)>=0 && endpoint>=1 && endpoint<=ENDPOINTS && (mode==1 || mode==3)) mask|=1U<<(endpoint-1);
     return mask;
 }
-int binding_scan_page(binding_scan_t *s, uint8_t index, uint8_t total, uint8_t count, uint8_t page_mask) {
+int binding_scan_page(binding_scan_t *s, uint8_t index, uint8_t total, uint8_t count, uint32_t page_mask) {
     if (index!=s->next || total>BINDING_CAPACITY || index+count>total || (index && total!=s->total) || (!count && index<total)) return -1;
     s->total=total; s->next=index+count; s->mask|=page_mask;
     return s->next==total ? 1 : 0;

@@ -1,12 +1,13 @@
-# XIAO ESP32-C6 — osiem kanałów Zigbee
+# XIAO ESP32-C6 — 8 wejść i 24 endpointy Zigbee
 
-Wersja **2.2.0** dla Seeed Studio XIAO ESP32-C6 ze stałym zasilaniem USB i
+Wersja **2.3.0** dla Seeed Studio XIAO ESP32-C6 ze stałym zasilaniem USB i
 anteną zewnętrzną U.FL albo wewnętrzną (osobne obrazy firmware’u). Urządzenie pracuje jako router Zigbee, bez usypiania
-i bez heartbeat. Każdy kanał ma własny endpoint, konfigurację i bindingi.
+i bez heartbeat. Każdy z 24 endpointów ma własną konfigurację, bindingi i binding_priority.
+Osiem wejść fizycznych można przypisywać do endpointów niezależnie.
 
 [Kod źródłowy](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch).
-[Wydanie 2.2.0 — firmware, konwerter i kompletna paczka](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch/releases/tag/v2.2.0).
-Skrypt pakujący generuje również lokalne `dist/xiao-8ch-v2.2.0.zip`.
+[Wydanie 2.3.0 — firmware, konwerter i kompletna paczka](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch/releases/tag/v2.3.0).
+Skrypt pakujący generuje również lokalne `dist/xiao-8ch-v2.3.0.zip`.
 [Wydanie 1.2.0 na GitHubie](https://github.com/direk/xiao-esp32-c6-8ch-zigbee-switch/releases/tag/v1.2.0)
 jest starszą wersją czterokanałową.
 
@@ -16,7 +17,7 @@ Każdy przycisk lub przełącznik podłącz między swoim pinem a **GND**.
 Wejścia mają wewnętrzne podciąganie do 3,3 V i debounce 35 ms.
 Do GPIO wolno podłączać wyłącznie styki bezpotencjałowe, nigdy 230 V.
 
-| Kanał / endpoint | Pin XIAO | GPIO |
+| Wejście (domyślny endpoint legacy) | Pin XIAO | GPIO |
 |---|---|---|
 | CH1 / 1 | D0 | 0 |
 | CH2 / 2 | D1 | 1 |
@@ -83,8 +84,19 @@ bezpośrednio do GPIO. [Pełny opis protokołu i odpowiedzi](docs/UART.md).
   `action`. Opcja jest niezależna dla CH1–CH8 i zapisywana na urządzeniu.
   Bez pasującego bindingu kanał zawsze wysyła `action`.
 - `switch_type`: funkcja z tabeli poniżej, osobna dla każdego kanału.
-- `switch_actions`: `off`, `on` lub `toggle` dla wejścia push w funkcjach
+- `switch_actions`: `off`, `on`, `toggle` lub `on_off` dla wejścia push w funkcjach
   `toggle` i `momentary`. Domyślnie `toggle`.
+  Nowe `on_off` (od testowej wersji 2.2.1; wymaga konwertera 0.0.8) wysyła jawne ON/OFF zamiast komendy Toggle.
+  Dla `push + toggle` kolejne naciśnięcia wysyłają ON, OFF, ON, OFF.
+  Dzięki temu grupa żarówek o mieszanych stanach otrzymuje tę samą komendę.
+  Każdy kanał ma osobną kolejność, wspólną dla przycisku i komend UART/USB.
+  Dla `push + momentary` kolejność ON/OFF zmienia się zarówno przy naciśnięciu, jak i puszczeniu.
+  `rocker` i funkcje zaawansowane ignorują `switch_actions`.
+  Ustawienie jest trwałe; kolejność jest w RAM, bez zapisu pamięci przy każdym kliknięciu.
+  Po restarcie lub zapisie `switch_actions` zaczyna się od ON; inne ustawienia zachowują kolejność.
+  Zewnętrzne automatyzacje i stan żarówek nie zmieniają kolejności: jeśli następne jest ON,
+  a światło już świeci, kliknięcie nie zmieni go wizualnie.
+  Przy wysyłaniu `action` otrzymasz odpowiednio `chN_on` i `chN_off`.
 - `min_level`, `max_level`: zakres jasności 1–254, domyślnie 1 i 254.
 - `transition_time`: czas przejścia w 0,1 s, domyślnie 25 (2,5 s), zakres 0–600.
 - `color_temp_min`, `color_temp_max`: granice temperatury w miredach,
@@ -98,6 +110,155 @@ po sekundzie od ostatniej zmiany; zmiana parametrów wejścia lub funkcji
 zatrzymuje trwającą regulację. `binding_priority` działa od następnego polecenia
 i nie przerywa przytrzymania. Po aktualizacji istniejące urządzenia mają tę
 opcję `ON` na wszystkich kanałach; pozostałe ustawienia są zachowane.
+
+## 24 endpointy i przypisywanie wejść — od 2.3.0
+
+Model Zigbee pozostaje `XIAO-C6-8CH`. Konwerter **0.1.0** udostępnia
+`ch1`–`ch24`, czyli endpointy EP1–EP24. To kanały logiczne; wejść fizycznych
+pozostaje osiem. OTA i globalna diagnostyka nadal używają tylko EP1.
+Po OTA podmień konwerter, zrestartuj Z2M i wykonaj **Interview oraz Reconfigure**.
+
+Każdy endpoint ma własne `switch_type`, `switch_actions`, `scene_id`, `scene_list`,
+`group_id`, zakresy, `binding_priority` oraz:
+
+| Ustawienie | Wartości | Znaczenie |
+|---|---|---|
+| `input_source_chN` | none, D0, D1, D2, D3, D4, D5, D8, D9 | Fizyczne wejście lub tylko UART/USB |
+| `input_gesture_chN` | legacy, single, double, hold | Sposób wyzwalania z fizycznego wejścia |
+
+`legacy` zachowuje surowy styk i dotychczasowe tryby push/rocker, w tym czasy
+500 ms w zaawansowanych funkcjach. `single`/`double` aktywuje endpoint **raz**,
+jak pojedyncze wirtualne naciśnięcie przez 100 ms. `hold` aktywuje go na czas
+przytrzymania, zaczynając regulację bez drugiego oczekiwania 500 ms po
+rozpoznaniu gestu. Puszczenie kończy regulację komendą Stop z tego samego EP.
+Działanie wynika z `switch_type` endpointu: np. toggle/on_off, scene/scene_cycle,
+brightness_level. Nie jest to dodatkowa tabela działań gestów wewnątrz endpointu.
+
+Dla jednego pinu nie wolno mieszać `legacy` z rozpoznawanymi gestami — zapis
+zostanie odrzucony. Najpierw przełącz dotychczasowy endpoint na `single`,
+a dopiero potem przypisz kolejne endpointy do `double` i `hold` tego pinu.
+Wiele endpointów może reagować na ten sam pin i gest (każdy wykonuje własną akcję).
+Rockery wymagają `legacy`; `single/double/hold` wymagają pin_mode=push.
+
+Przykład: D1 steruje EP2/EP10/EP18. W panelu Z2M ustaw kolejno:
+
+1. `pin_mode_d1=push`, `input_gesture_ch2=single`,
+   `switch_type_ch2=toggle`, `switch_actions_ch2=on_off`.
+2. EP10: `input_source_ch10=D1`, `input_gesture_ch10=double`,
+   `switch_type_ch10=scene_cycle`, `group_id_ch10=10`, `scene_list_ch10=0,1,3`.
+3. EP18: `input_source_ch18=D1`, `input_gesture_ch18=hold`,
+   `switch_type_ch18=brightness_level` (lub brightness_level_no_onoff).
+4. Zbinduj EP2/ch2 przez genOnOff do odpowiednich lamp, EP18/ch18 przez
+   genLevelCtrl do grupy. EP10 ma bezpośredni cel grupowy ustawiony przez group_id.
+
+Bez pasującego bindingu emitowane jest action **endpointu**, np. `ch18_brightness_move_up`.
+Binding EP2 nie wpływa na raporty EP10/EP18. Binding priority jest osobne dla
+każdego EP i dotyczy jego bindingu/bezpośredniej grupy. Dostępne są 456 akcje
+(24 endpointy × 19), a tabela bindingów ma 96 wpisów łącznie dla wszystkich EP.
+
+Ustawienia fizycznego pinu są wspólne i mają osobne pola bez sufiksów chN:
+`pin_mode_d1`, `pin_invert_d1`, `pin_hold_time_d1` (250–5000 ms, domyślnie 500)
+i `pin_multi_click_time_d1` (150–1000 ms, domyślnie 500). Analogiczne pola
+są dla d0/d2/d3/d4/d5/d8/d9. Czasy dotyczą klasyfikatora single/double/hold.
+`input_mode_chN` i `invert_chN` pozostają zgodnymi aliasami ustawień źródłowego
+pinu, gdy endpoint ma przypisany pin; bez źródła dotyczą wirtualnego endpointu
+(invert nie odwraca komend PRESS/RELEASE). Zmiana wspólnego parametru pinu
+synchronizuje powiązane endpointy; odśwież ich pola w Z2M, jeśli panel pokazuje
+starą wartość. Zmiana na rocker jest odrzucana, jeśli istnieje mapping decoded
+lub powiązany tryb zaawansowany, który nie obsługuje rockera.
+
+Pojedynczy klik czeka na zakończenie okna wielokliku **tylko gdy na tym pinie
+istnieje odbiorca double**. Przy hold klik jest pomijany, a release nie wykonuje
+kolejnej akcji. Przy startup/rebase z wciśniętym wejściem nie ma sztucznego gestu.
+W trybach zaawansowanych wyzwolony logiczny klik może dodatkowo podlegać
+istniejącemu rozpoznawaniu wielokliku endpointu (500 ms).
+
+Migracja 2.2.x zachowuje konfiguracje i bindingi EP1–EP8. Ich źródła pozostają
+D0–D5/D8/D9 z gesture=legacy. Nowe EP9–EP24 mają source=none, więc samo OTA
+nie dodaje dodatkowych akcji. EP9–EP16 mają domyślnie gesture=double i toggle,
+EP17–EP24 gesture=hold i brightness_level; trzeba przypisać im pin.
+Konfiguracja 24 EP i pinów jest zapisana w NVS jako config3; starszy config2
+pozostaje eksportem ustawień pierwszych ośmiu EP dla rollbacku. Starszy firmware
+nie obsłuży nowych mappingów i endpointów. Restart nie zapisuje pozycji cykli
+ani faz ON/OFF — pierwsza akcja po restarcie jest nadal pierwszą w sekwencji.
+
+UART/USB: `CLICK 2` symuluje fizyczne D1 przez nową mapę; `CLICK EP10`
+omija mapę i aktywuje bezpośrednio EP10. **DOUBLE EP10** to dwa logiczne
+naciśnięcia EP10, więc w toggle wykona dwie akcje; nie jest odpowiednikiem
+jednego fizycznego gestu double. `GET 2` pokazuje pin i przypisane endpointy,
+`GET EP10` konfigurację endpointu, `STATUS EP10` jego bindingi/stany.
+Protokół 3 zachowuje stare formy komend; szczegóły w [UART.md](docs/UART.md).
+
+## Identify i diagnostyka
+
+Podmień konwerter na **0.0.9**, zrestartuj Z2M, a po OTA wykonaj **Interview**
+i **Reconfigure**. Nowy klaster Diagnostics musi zostać zapisany w deskryptorze
+urządzenia w Z2M. Dostępne są wspólne opcje całej płytki (bez sufiksu kanału):
+
+- `identify`: wybierz `identify`, aby migać diodą na **GPIO15**. Domyślny czas
+  to 3 sekundy; opcja konwertera `identify_timeout` pozwala ustawić 1–30 s.
+  LED jest aktywna stanem LOW, zmienia stan co 250 ms i gaśnie po zakończeniu.
+  Standardowa komenda Identify z czasem 0 zatrzymuje identyfikację.
+  Identify działa na każdym z ośmiu endpointów; wspólna LED miga, dopóki
+  przynajmniej jeden endpoint ma aktywny IdentifyTime. Obsługa nie blokuje
+  przycisków, UART/USB, Zigbee ani OTA.
+- `number_of_resets`: standardowy atrybut klastra **Diagnostics 0x0B05** na EP1.
+  Licznik jest trwały; pierwsze uruchomienie tej funkcji daje 0, kolejne rozruchy
+  zwiększają go do maksymalnie 65535. To licznik od pierwszej instalacji tej
+  funkcji, nie historia restartów sprzed aktualizacji. Restart zasilania też się liczy.
+- `uptime`: sekundy od startu bieżącego programu.
+- `reset_reason`: np. `power_on`, `software`, `panic`, `brownout`,
+  `task_watchdog`, `usb` — przyczyna startu zgłoszona przez ESP-IDF.
+- `zigbee_tx_request_errors`: liczba **lokalnie odrzuconych żądań APS** dla
+  bezpośredniego sterowania od startu programu. Nie jest to liczba zgubionych
+  pakietów, braków ACK ani żarówek, które nie wykonały komendy. Raporty action,
+  ruch routera i OTA nie są wliczane. Sukces przyjęcia żądania nie dowodzi
+  dostarczenia ani wykonania; przy grupie nie ma potwierdzenia każdej lampy.
+
+Dodatkowe trzy pola są atrybutami naszego klastra 0xFC00 na EP1; nie podszywają
+się pod standardowe liczniki MAC/APS. Odczyt działa przez przyciski odświeżania
+w Z2M. Wartości są też raportowane po dołączeniu do sieci i co 60 sekund.
+`uptime` odświeża się lokalnie co sekundę; licznik błędów po odrzuceniu żądania.
+Licznik restartów jest zapisany w osobnej przestrzeni NVS `xiao_diag`, raz na
+rozruch. Komenda RESET sieci i reset ustawień przyciskiem BOOT go zachowują;
+pełne kasowanie pamięci flash go usuwa. Pozostałe liczniki są w RAM.
+
+## Rotacja scen grupy
+
+Każdy kanał ma własne pole tekstowe `scene_list` w Z2M. Przykład dla CH2:
+
+```json
+{"input_mode_ch2":"push","group_id_ch2":10,"scene_list_ch2":"0,1,3","switch_type_ch2":"scene_cycle"}
+```
+
+Ustaw najpierw `input_mode=push`, jeśli kanał był rocker. W Z2M wybierz
+`switch_type=scene_cycle`, `group_id` wybranej grupy i wpisz `scene_list`.
+Kliknięcia przywołują sceny **0 → 1 → 3 → 0**. Są to ID scen, nie nazwy;
+ID 0 jest poprawne. Kolejność jest dokładnie taka jak w polu tekstowym.
+Lista mieści do 16 różnych ID od 0 do 255. Konwerter usuwa spacje wokół ID
+oraz zera wiodące; odrzuca duplikaty, puste elementy i wartości spoza zakresu.
+Puste pole czyści listę i wyłącza wysyłanie scen. `group_id=0` również
+wyłącza wysyłanie w `scene_cycle`; ten tryb wymaga grupy 1–65527.
+
+Grupa i lista zapisują się na urządzeniu po sekundzie bez kolejnego zapisu.
+Lista i grupa mogą być ustawione przed wyborem trybu. Ich zapis, zapis trybu
+oraz restart ustawiają następne kliknięcie na pierwszą pozycję. Inne ustawienia
+nie resetują pozycji. Pozycja jest tylko w RAM, bez zapisywania NVS co kliknięcie.
+
+XIAO wysyła genScenes Recall Scene bezpośrednio do grupy, więc Z2M i HA nie
+muszą działać. Sceny trzeba wcześniej utworzyć w lampach tej grupy w Z2M.
+Brakująca scena nie jest automatycznie wykrywana ani pomijana; dana lampa może
+nie zareagować, a następny klik nadal przejdzie do następnego ID z listy.
+Nie jest potrzebny dodatkowy binding genScenes, bo cel wskazuje `group_id`.
+`binding_priority=ON` pomija `action`, a OFF dodatkowo raportuje `chN_scene`
+(tak jak istniejący tryb `scene`; raport nie zawiera ID sceny).
+Przycisk fizyczny, UART i USB współdzielą tę samą kolejność; `CLICK`, `PRESS`
+po puszczeniu i każdy klik w `DOUBLE`/`TRIPLE` wybierają następne sceny.
+Puszczenie i samo trzymanie nie wywołują dodatkowej sceny.
+`GET x` pokazuje `scene_list` oraz tryb. Wywołania scen z zewnętrznych automatyzacji
+nie zmieniają lokalnej pozycji cyklu.
+
+Pliki do lokalnego testu OTA i instrukcja: [OTA.md](docs/OTA.md#lokalny-test-bez-publikacji).
 
 ## Funkcje przycisków
 
@@ -117,6 +278,7 @@ Krok jasności to **25 jednostek**, nie 25%; krok temperatury to 87 miredów.
 | `move_to_color_temperature_up` | Krok w stronę większej wartości mired | Brak | Do `color_temp_max` |
 | `move_to_color_temperature_down` | Krok w stronę mniejszej wartości mired | Brak | Do `color_temp_min` |
 | `scene` | Recall Scene przy naciśnięciu | Każde naciśnięcie działa osobno | Brak dodatkowej komendy |
+| `scene_cycle` | Następna scena z `scene_list` | Każde naciśnięcie wybiera następną | Brak dodatkowej komendy |
 | `brightness_level_no_onoff` | Brak | Brak | Naprzemiennie jaśniej/ciemniej, bez ON/OFF |
 | `brightness_level_up_no_onoff` | Brak | Krok jaśniej, bez ON/OFF | Do `max_level`, bez ON/OFF |
 | `brightness_level_down_no_onoff` | Brak | Krok ciemniej, bez ON/OFF | Do `min_level`, bez ON/OFF |
@@ -222,7 +384,7 @@ i `throttle: 0`. W Z2M wymagającym włączenia zewnętrznych konwerterów ustaw
 
 ## Wgranie obrazów
 
-Rozpakuj `dist/xiao-8ch-v2.2.0.zip`. Wybierz wariant odpowiadający antenie:
+Rozpakuj `dist/xiao-8ch-v2.3.0.zip`. Wybierz wariant odpowiadający antenie:
 
 | Antena | Aplikacja do zestawu USB (0x10000) | Czysta instalacja (0x0) |
 |---|---|---|
@@ -424,7 +586,7 @@ python scripts/package_release.py --idf-path "$IDF_PATH"
 
 Skrypt najpierw kompiluje oba warianty (również przyrostowo), a potem używa
 programu esptool zainstalowanego razem z ESP-IDF; nie wymaga
-ręcznego kopiowania obrazów. Utworzy `dist/xiao-8ch-v2.2.0.zip` w głównym
+ręcznego kopiowania obrazów. Utworzy `dist/xiao-8ch-v2.3.0.zip` w głównym
 katalogu projektu i usunie swoje pliki tymczasowe. ZIP zawiera obrazy do wgrania,
 źródła, konwerter, dokumentację, licencje i sumy kontrolne. Obok ZIP powstaną
 cztery obrazy z nazwami anten, konwerter, `manifest.json` i `SHA256SUMS` do

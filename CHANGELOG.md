@@ -1,5 +1,51 @@
 # Historia zmian
 
+## 2.3.0 — 27 listopada 2026
+
+- 24 endpointy źródłowe, niezależne konfiguracje/binding priority/sceny,
+  32-bitowe maski bindingów i tabela 96 wpisów.
+- input_source: none lub D0–D5/D8/D9; input_gesture: legacy/single/double/hold.
+  Osiem fizycznych klasyfikatorów rozdziela gesty przed aktywacją endpointów.
+- Wspólne ustawienia elektryczne pinów i czasy hold/multi-click w Z2M.
+  Odrzucanie mieszanych legacy/decoded i niezgodnych konfiguracji rockera.
+- Protokół UART/USB 3: adresy EP1..EP24, GET EPn, STATUS EPn, wszystkie
+  dotychczasowe komendy, wspólny RELEASE ALL i rozróżnianie celu w deduplikacji.
+- Stare numery 1..8 symulują wejścia fizyczne przez mapę. Prefiks EP omija ją.
+- NVS config3 przechowuje pełne mapy/parametry. Migracja zachowuje EP1..8
+  w trybie legacy, EP9..24 nie mają przypisanego pinu. OTA/diagnostyka nadal EP1.
+- Konwerter 0.1.0 udostępnia ch1..ch24 i 456 akcji; wymaga Interview.
+- Obie anteny: obrazy USB i Zigbee OTA 2.3.0 jako załączniki wydania.
+- Zawiera także funkcje niepublikowanych wersji lokalnych 2.2.1 i 2.2.2.
+
+## 2.2.2 — lokalna wersja testowa, nieopublikowana
+
+- Identify 0x0003: nieblokujące miganie wspólnej LED GPIO15 (active LOW),
+  250 ms na stan, czas SDK IdentifyTime, automatyczne zatrzymanie.
+- Diagnostics 0x0B05 na EP1: trwały NumberOfResets, zapis raz na rozruch
+  w osobnej przestrzeni NVS. Pierwszy start 0; sieciowy RESET zachowuje licznik.
+- Dodatkowe pola diagnostyczne 0xFC00: uptime, reset_reason i liczba lokalnie
+  odrzuconych żądań bezpośredniego sterowania APS od rozruchu.
+- Konwerter 0.0.9: globalne Identify oraz pola diagnostyczne bez sufiksów kanałów.
+  Raportowanie po dołączeniu/co 60 s; odczyt na żądanie. Wymaga Interview.
+- Zachowuje scene_cycle i on_off. Nowy numer pozwala testować OTA z 2.2.1.
+
+## 2.2.1 — lokalna wersja testowa, nieopublikowana
+
+- Nowy `switch_type=scene_cycle` i tekstowe `scene_list` osobno dla CH1–CH8.
+  Do 16 różnych ID (0–255), kolejność użytkownika, grupowe genScenes Recall Scene.
+- Trwały zapis list i trybu z zachowaniem layoutu config2 i ustawień 2.2.0.
+  Własny indeks RAM kanału, reset po zapisie listy/grupy/trybu lub restarcie.
+- Z2M: pola tekstowe, walidacja i normalizacja; UART/USB: GET z listą scen.
+- Obie anteny mają lokalne binarki i obrazy OTA 2.2.1, konwerter 0.0.8.
+
+
+- `switch_actions=on_off` dla każdego kanału: jawne ON/OFF na przemian dla
+  push/toggle; dla push/momentary sekwencja zmienia się na naciśnięciu i puszczeniu.
+- Konwerter 0.0.8 udostępnia czwartą opcję; GET zwraca jej nazwę.
+- Opcja zapisywana w NVS z zachowaniem zgodności config2 przy rollbacku;
+  kolejność w RAM, niezależna dla kanałów, startuje od ON po restarcie lub
+  zapisie switch_actions. Pozostałe ustawienia nie resetują kolejności.
+
 ## 2.2.0 — 26 listopada 2026
 
 - Standardowy klient Zigbee OTA na endpoint 1 i obsługa OTA w konwerterze 0.0.7.

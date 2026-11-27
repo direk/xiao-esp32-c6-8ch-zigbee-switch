@@ -8,7 +8,8 @@ int main(void) {
     uint8_t priorities[CHANNELS];
     for(unsigned i=0;i<CHANNELS;++i) {
         channel_defaults(&cfg[i]);priorities[i]=i%2;
-        cfg[i].invert=i%2;cfg[i].switch_action=i%3;
+        memcpy(cfg[i].scene_list,"\077240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255",64);
+        cfg[i].invert=i%2;cfg[i].switch_action=i%4;
         cfg[i].min_level=254;cfg[i].max_level=254;cfg[i].transition_time=600;
         cfg[i].color_min=1000;cfg[i].color_max=1000;cfg[i].scene_id=255;cfg[i].scene_group=0xfff7;
     }

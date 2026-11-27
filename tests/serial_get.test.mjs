@@ -7,7 +7,7 @@ import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import definition from '../zigbee2mqtt/xiao-c6-8ch.mjs';
 
-test('GET returns valid complete JSON for all 13 modes, rocker modes and eight channels', () => {
+test('GET returns valid complete JSON for all 14 modes, rocker modes and eight channels', () => {
     const root = fileURLToPath(new URL('..', import.meta.url));
     const directory = mkdtempSync(join(tmpdir(), 'xiao-get-'));
     try {
@@ -16,24 +16,24 @@ test('GET returns valid complete JSON for all 13 modes, rocker modes and eight c
             '-fsanitize=address,undefined', '-I', 'firmware/main', 'firmware/main/control.c',
             'firmware/main/serial_input.c', 'tests/serial_get_harness.c', '-o', executable], {cwd: root});
         const rows = execFileSync(executable, {encoding: 'utf8'}).trim().split('\n').map((line) => JSON.parse(line));
-        assert.equal(rows.length, 15 * 8);
+        assert.equal(rows.length, 16 * 8);
         const modes = definition.exposes.find((x) => x.property === 'switch_type_ch1').values;
         const gestures = [
             ['single'], ['single', 'release'], ['single', 'double', 'triple', 'hold', 'release'],
             ['single', 'hold', 'release'], ['single', 'double', 'hold', 'release'],
             ['single', 'double', 'hold', 'release'], ['hold', 'release'],
             ['single', 'hold', 'release'], ['single', 'hold', 'release'], ['single'],
-            ['hold', 'release'], ['double', 'hold', 'release'], ['double', 'hold', 'release'],
+            ['hold', 'release'], ['double', 'hold', 'release'], ['double', 'hold', 'release'], ['single'],
         ];
         for (let index = 0; index < rows.length; ++index) {
             const ep = index % 8;
-            const rocker = index >= 13 * 8;
-            const mode = Math.floor(index / 8) - (rocker ? 13 : 0);
+            const rocker = index >= 14 * 8;
+            const mode = Math.floor(index / 8) - (rocker ? 14 : 0);
             assert.deepEqual(rows[index], {
-                channel: ep + 1, input_mode: rocker ? 'rocker' : 'push', switch_type: modes[mode],
+                channel: ep + 1, input_source:'none', input_gesture:'legacy', input_mode: rocker ? 'rocker' : 'push', switch_type: modes[mode],
                 binding_priority: ep % 2 ? 'ON' : 'OFF', invert: Boolean(ep % 2),
-                switch_actions: ['off', 'on', 'toggle'][ep % 3], min_level: 254, max_level: 254,
-                transition_time: 600, color_temp_min: 1000, color_temp_max: 1000, scene_id: 255, group_id: 0xfff7,
+                switch_actions: ['off', 'on', 'toggle', 'on_off'][ep % 4], min_level: 254, max_level: 254,
+                transition_time: 600, color_temp_min: 1000, color_temp_max: 1000, scene_id: 255, group_id: 0xfff7, scene_list: '240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255',
                 commands: rocker ? ['GET', 'PRESS', 'RELEASE', 'SET'] :
                     ['GET', 'PRESS', 'RELEASE', 'CLICK', 'DOUBLE', 'TRIPLE', 'HOLD'],
                 gestures: rocker ? ['close', 'open'] : gestures[mode],
@@ -57,10 +57,10 @@ test('INFO and STATUS JSON preserve types, diagnostics, maximum counters and opt
         const lines = execFileSync(executable, ['--json'], {encoding: 'utf8'}).trim().split('\n');
         assert.equal(lines.length, 3);
         const info = JSON.parse(lines[0]);
-        assert.deepEqual(info, {firmware: '2.2.0', protocol: 2, model: 'XIAO-C6-8CH', boot_id: 4294967295,
-            channels: 8, baud: 115200, format: '8N1', port: 'uart', transports: ['uart','usb'], logs_enabled: false, request_ids: true, id_order: 'increasing', dedup_depth: 16, hold_timeout_ms: 10000,
+        assert.deepEqual(info, {firmware: '2.3.0', protocol: 3, model: 'XIAO-C6-8CH', boot_id: 4294967295,
+            channels: 8, endpoints:24, endpoint_addressing:true, baud: 115200, format: '8N1', port: 'uart', transports: ['uart','usb'], logs_enabled: false, request_ids: true, id_order: 'increasing', dedup_depth: 16, hold_timeout_ms: 10000,
             commands: ['PING','INFO','STATUS','GET','PRESS','RELEASE','CLICK','DOUBLE','TRIPLE','HOLD','SET','RELEASE ALL','RESET','LOG'],
-            antenna: 'internal', ota: {enabled: true, manufacturer: 0x131b, image_type: 0xc600, file_version: 0x02020000,
+            antenna: 'internal', ota: {enabled: true, manufacturer: 0x131b, image_type: 0xc600, file_version: 0x02030000,
                 slot: 'ota_1', state: 'downloading', received: 4294967295, total: 4294967295}});
         const offline = JSON.parse(lines[1]);
         assert.equal(offline.uptime_ms, 123456);

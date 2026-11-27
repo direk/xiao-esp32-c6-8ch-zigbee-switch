@@ -70,6 +70,8 @@ for antenna in VARIANTS:
                        "bytes": (out / name).stat().st_size,
                        "sha256": hashlib.sha256((out / name).read_bytes()).hexdigest()})
 (out / "ota/index.json").write_text(json.dumps(ota_entries, indent=2) + "\n")
+local_ota_entries=[{**entry,"url":entry["fileName"]} for entry in ota_entries]
+(out / "ota/local-index.json").write_text(json.dumps(local_ota_entries,indent=2)+"\n")
 if args.sync_repository_ota:
     shutil.copytree(out / "ota", root / "ota", dirs_exist_ok=True)
 for directory in ["zigbee2mqtt", "docs", "tests", "scripts", ".github"]:
@@ -94,7 +96,7 @@ manifest = {
     "version": firmware_version, "target": "esp32c6", "board": "Seeed Studio XIAO ESP32-C6",
     "esp_idf": "5.4.2", "esp_zigbee_lib": "1.6.9", "esp_zboss_lib": "1.6.9",
     "converter_tested_with": "zigbee-herdsman-converters 26.135.0",
-    "converter_revision": "0.0.7",
+    "converter_revision": re.search(r"version: '([^']+)'", (root / "zigbee2mqtt/xiao-c6-8ch.mjs").read_text()).group(1),
     "ota": {"endpoint": 1, "file_version": file_version(firmware_version), "rollback": True,
             "index": "ota/index.json", "images": ota_entries,
             "usb_migration_required_from": "2.1.x", "slots": ["0x10000", "0x1a0000"],
@@ -106,17 +108,21 @@ manifest = {
     "binding_table_decoder": "raw_zboss_variable_records",
     "binding_priority": {"per_channel": True, "default": "ON", "persistent": True,
                          "off_behavior": "direct_control_and_action"},
-    "channels": 8,
+    "device_services": {"identify": {"gpio": 15, "active_low": True, "half_period_ms": 250},
+                        "diagnostics": {"endpoint": 1, "cluster": "0x0b05", "persistent_reset_count": True,
+                                        "custom_metrics": ["uptime", "reset_reason", "zigbee_tx_request_errors"]}},
+    "channels": 8, "endpoints": 24, "binding_capacity":96, "physical_mapping":True,
     "channel_gpio": [0, 1, 2, 21, 22, 23, 19, 20],
     "uart": {"tx_gpio": 16, "rx_gpio": 17, "baud": 115200, "format": "8N1",
-             "protocol": "ascii_buttons_v2", "hold_timeout_ms": 10000,
+             "protocol": "ascii_buttons_v3", "endpoint_addressing":True, "endpoint_range":[1,24], "legacy_input_range":[1,8], "hold_timeout_ms": 10000,
              "dedicated_task": True, "queue_depth": 8, "commands_per_tick": 1,
              "get_configuration": True, "reply_max_bytes": 2063,
              "info_status": True, "request_ids": "increasing_uint32", "dedup_depth": 16,
              "receive_error_recovery": True, "reset": "zigbee_network_and_bindings",
              "usb_commands": True, "sessions": "per_port", "logs_default": False,
              "log_control": "per_port_LOG_0_1", "log_prefix": "#LOG "},
-    "modes": 13,
+    "modes": 14,
+    "scene_cycle": {"per_channel": True, "persistent": True, "max_scenes": 16, "scene_id_range": [0, 255]},
     "images": images,
     "usb_components": [{"file": name, "offset": offset, "sha256": hashlib.sha256((out / name).read_bytes()).hexdigest()} for name, _, offset in common],
 }
@@ -136,7 +142,8 @@ shutil.copy2(root / "zigbee2mqtt/xiao-c6-8ch.mjs", archive.parent / "xiao-c6-8ch
 for entry in ota_entries:
     shutil.copy2(out / "ota" / entry["fileName"], archive.parent / entry["fileName"])
 shutil.copy2(out / "ota/index.json", archive.parent / "ota-index.json")
-attachments = [archive.name, "manifest.json", "xiao-c6-8ch.mjs", "ota-index.json"] + [i["file"] for i in images] + [name for name, _, _ in common] + [e["fileName"] for e in ota_entries]
+shutil.copy2(out / "ota/local-index.json", archive.parent / "ota-index-local.json")
+attachments = [archive.name, "manifest.json", "xiao-c6-8ch.mjs", "ota-index.json", "ota-index-local.json"] + [i["file"] for i in images] + [name for name, _, _ in common] + [e["fileName"] for e in ota_entries]
 (archive.parent / "SHA256SUMS").write_text("".join(
     f"{hashlib.sha256((archive.parent / name).read_bytes()).hexdigest()}  {name}\n"
     for name in sorted(attachments)))

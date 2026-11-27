@@ -9,10 +9,10 @@ import {parseOtaImage, getOtaFirmware} from 'zigbee-herdsman/dist/controller/hel
 import {prepareDefinition} from 'zigbee-herdsman-converters';
 import source from '../zigbee2mqtt/xiao-c6-8ch.mjs';
 
-test('converter enables OTA with the existing eight-endpoint model identity', () => {
+test('converter enables OTA with the unchanged model identity with 24 endpoints', () => {
     const definition = prepareDefinition(source);
     assert.deepEqual(definition.ota, {modelId: 'XIAO-C6-8CH', manufacturerName: 'DIY-XIAO'});
-    assert.equal(Object.keys(definition.endpoint()).length, 8);
+    assert.equal(Object.keys(definition.endpoint()).length, 24);
 });
 
 test('independent herdsman decoder validates both generated antenna containers and the application payload', async () => {
